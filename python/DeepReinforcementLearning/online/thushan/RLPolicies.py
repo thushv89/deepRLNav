@@ -129,7 +129,7 @@ class ContinuousState(Controller):
         #to_move = (data['initial_size'] * 0.1) / (data['initial_size'] * data['neuron_balance'])
         #to_move = 0.25 * np.exp(-(data['neuron_balance']-1.)**2/2.) * (1. + err_diff) * (1. + curr_err)
         # newer to_move eqn
-        to_move = np.exp(-(data['neuron_balance']-1.)**2/5.) * np.abs(err_diff)
+        to_move = 0.5*np.exp(-(data['neuron_balance']-1.)**2/5.) * np.abs(err_diff)
         print('To move: ', to_move)
 
 

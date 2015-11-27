@@ -225,17 +225,17 @@ if __name__ == '__main__':
 
     modelType = 'DeepRL'
 
-    learning_rate = 0.1
+    learning_rate = 0.2
     batch_size = 2
     epochs = 1
     theano.config.floatX = 'float32'
 
-    hid_sizes = [1024,512]
+    hid_sizes = [1024]
 
     corruption_level = 0.2
     lam = 0.1
-    iterations = 7
-    pool_size = 20
+    iterations = 8
+    pool_size = 25
 
     valid_pool_size = pool_size//2
 
