@@ -1,0 +1,158 @@
+#!/usr/bin/env python
+
+__author__ = 'thushv89'
+
+from pymorse import Morse
+from morse.builder import *
+import rospy
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Pose
+from std_msgs.msg import Bool
+from rospy_tutorials.msg import Floats
+import numpy as np
+from PIL import Image as img
+import math
+from rospy.numpy_msg import numpy_msg
+import sys
+    
+def callback_cam(msg):
+    if isMoving:
+        global currInputs
+        data = msg.data
+        
+        rows = int(msg.height)
+        cols = int(msg.width)
+        print('h',rows,'w',cols)
+        num_data = []
+	for i in range(0,len(data),4):
+	  
+	    num_data.append(int(0.2989 * ord(data[i]) + 0.5870 * ord(data[i+1]) + 0.1140 * ord(data[i+2])))
+	
+	mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
+
+	img_mat = img.fromarray(mat)
+	img_mat.thumbnail((64,64))
+	
+	currInputs.append(list(img_mat.getdata()))
+	print('IMG SUCCESS')
+    
+
+def callback_laser(msg):
+    global obstacle_msg_sent
+    global currLabels
+    rangesTup = msg.ranges
+    rangesNum = [float(r) for r in rangesTup]
+    rangesNum.reverse()
+    min_range = min(rangesNum)
+
+    if(min_range<0.2):	
+	import time
+	import os
+	obstacle_status_pub.publish(True)
+	time.sleep(0.1)
+	cmd = 'rosnode kill /save_data_node'
+	os.system(cmd)    
+	
+    if isMoving:    	
+	labels = [0 if val<2.9 else 1 for val in rangesNum]
+	
+	idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+	while(len(idx_of_1)>=2):
+	    idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+	    import random
+	    rand_idx = random.randint(0,len(idx_of_1)-1)
+	    labels[idx_of_1[rand_idx]]=0.0
+	    del idx_of_1[rand_idx]
+	if(1 in labels):	
+	    currLabels.append(labels.index(1))
+	else:
+	    currLabels.append(1)
+	    
+	print(currLabels)
+	print('Laser SUCCESS')    
+    
+
+def callback_odom(msg):
+    global prevPose
+    global isMoving
+    data = msg
+    pose = data.pose.pose # has position and orientation
+    
+    x = float(pose.position.x)
+    prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
+    y = float(pose.position.y)
+    prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
+    z = float(pose.position.z)
+    prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
+    
+    xo = float(pose.orientation.x)
+    prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
+    yo = float(pose.orientation.y)
+    prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
+    zo = float(pose.orientation.z)
+    prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
+    wo = float(pose.orientation.w)
+    prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
+    
+    tolerance = 0.001
+    if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance 
+       and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
+        isMoving = False
+    else:
+        isMoving = True
+    
+    #print("Moving status: ",isMoving)
+    prevPose = data.pose.pose
+
+def callback_path_finish(msg):
+    if int(msg.data)==1:
+        save_data()
+  
+def save_data():
+    import time
+    '''import pickle
+    global currInputs
+    global currLabels
+    global pub
+    pickle.dump( [currInputs,currLabels], open( "data.pkl", "wb" ) )
+    print(currInputs)
+    print(currLabels)'''
+    
+    global currInputs
+    global currLabels
+    global data_status_pub
+    global sent_input_pub
+    global sent_label_pub    
+    #print("Input size: ",np.asarray(currInputs,dtype=np.float32).shape)
+    #print("Label size: ",np.asarray(currLabels,dtype=np.float32).shape)
+    sent_input_pub.publish(np.asarray(currInputs,dtype=np.float32).reshape((-1,1)))
+    sent_label_pub.publish(np.asarray(currLabels,dtype=np.float32).reshape((-1,1)))
+    time.sleep(0.1)
+    data_status_pub.publish(True)
+    currInputs=[]
+    currLabels=[]
+
+isMoving = False
+prevPose = None
+data_status_pub = None
+obstacle_status_pub = None
+obstacle_msg_sent = False
+if __name__=='__main__':      
+    currInputs = []
+    currLabels = []
+
+    rospy.init_node("save_data_node")
+    #rate = rospy.Rate(1)
+    data_status_pub = rospy.Publisher('data_sent_status', Bool, queue_size=10)
+    sent_input_pub = rospy.Publisher('data_inputs', numpy_msg(Floats), queue_size=10)
+    sent_label_pub = rospy.Publisher('data_labels', numpy_msg(Floats), queue_size=10)
+    obstacle_status_pub = rospy.Publisher('obstacle_status',Bool, queue_size=10)
+    
+    rospy.Subscriber("/camera/image", Image, callback_cam)
+    rospy.Subscriber("/obs_scan", LaserScan, callback_laser)
+    rospy.Subscriber("/odom", Odometry, callback_odom)
+    rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
+    #rate.sleep()
+    rospy.spin() # this will block untill you hit Ctrl+C

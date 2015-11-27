@@ -1,0 +1,2 @@
+move_robot
+-DCATKIN_DEVEL_PREFIX=/home/thushv89/deepRL_nav/ros/move_robot/devel -DCMAKE_INSTALL_PREFIX=/home/thushv89/deepRL_nav/ros/move_robot/install -G Unix Makefiles

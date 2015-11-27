@@ -1,0 +1,7 @@
+set(_CATKIN_CURRENT_PACKAGE "map_and_state")
+set(map_and_state_MAINTAINER "thushv89 <thushv89@todo.todo>")
+set(map_and_state_DEPRECATED "")
+set(map_and_state_VERSION "0.0.0")
+set(map_and_state_BUILD_DEPENDS "map_server" "robot_state_publisher" "roscpp" "rospy")
+set(map_and_state_RUN_DEPENDS "map_server" "robot_state_publisher" "roscpp" "rospy")
+set(map_and_state_BUILDTOOL_DEPENDS "catkin")

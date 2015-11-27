@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/thushv89/deepRL_nav/ros/move_robot/devel/setup.sh

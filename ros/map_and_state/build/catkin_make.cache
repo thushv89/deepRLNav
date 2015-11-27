@@ -1,0 +1,2 @@
+map_and_state
+-DCATKIN_DEVEL_PREFIX=/home/thushv89/deepRL_nav/ros/map_and_state/devel -DCMAKE_INSTALL_PREFIX=/home/thushv89/deepRL_nav/ros/map_and_state/install -G Unix Makefiles

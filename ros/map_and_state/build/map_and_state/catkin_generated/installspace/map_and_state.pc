@@ -1,0 +1,8 @@
+prefix=/home/thushv89/deepRL_nav/ros/map_and_state/install
+
+Name: map_and_state
+Description: Description of map_and_state
+Version: 0.0.0
+Cflags: 
+Libs: -L/home/thushv89/deepRL_nav/ros/map_and_state/install/lib 
+Requires: 
