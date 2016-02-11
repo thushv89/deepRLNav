@@ -11,7 +11,7 @@ This a ros-python-c++ project for experimenting unsupervised obstacle navigation
 <li>move_robot_exec.py (ROS/python): Moving the robot by subscribing to a topic which sends which action to take</li>
 </ul>
 
-<strong>Keywords: </strong> ROS, Python, C++
+<strong>Keywords: </strong> ROS, Python, C++<br/>
 <strong>Dependencies: </strong> autonomy (ROS), amcl (ROS)
 
 <h2>How to run</h2>
