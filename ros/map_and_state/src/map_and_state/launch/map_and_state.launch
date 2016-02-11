@@ -1,5 +1,5 @@
 <launch>
-<param name="robot_description" textfile="/home/thushv89/deepRL_nav/ros/map_and_state/src/map_and_state/atrv.urdf"/>    
+<param name="robot_description" textfile="$(find map_and_state)/atrv.urdf"/>    
 <node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher" />
 <node name="map_server" pkg="map_server" type="map_server" args="$(find map_and_state)/map.yaml">
 <param name="topic_id" value="map"/>

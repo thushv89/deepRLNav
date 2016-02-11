@@ -27,6 +27,7 @@ int main(int argc, char* argv[]){
 	tf::TransformListener listener;
 	tf::StampedTransform mytransform;
 	try{
+	  ros::Duration(0.5).sleep();
 	  listener.waitForTransform("map","base_link",ros::Time::now(),ros::Duration(3.0));
 	  listener.lookupTransform("map", "base_link",
 				  ros::Time(0), mytransform);
@@ -38,16 +39,16 @@ int main(int argc, char* argv[]){
 	}
       
 	double yaw_angle = tf::getYaw(mytransform.getRotation()); //yaw will be in rad    
-	int x = int(mytransform.getOrigin().getX());
-	int y = int(mytransform.getOrigin().getY());
+	double x = double(mytransform.getOrigin().getX());
+	double y = double(mytransform.getOrigin().getY());
 
 	cout << "Current location" << x << "," << y << "\n";
 	cout << "Current Yaw: " << yaw_angle << "\n";
-	int newX = 0;
-	int newY = 0;
+	double newX = 0;
+	double newY = 0;
 	double newZO = 0;
 	double newWO = 0;
-	int stepSize = 3;
+	int stepSize = 2;
 	int stepSize2 = 1;
 	// |
 	// |

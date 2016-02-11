@@ -1,4 +1,7 @@
 *.png
+*.jpg
+*.jpeg
+*.pyc
 *.pkl
-/devel
-/build
+**/devel
+**/build

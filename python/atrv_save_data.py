@@ -26,17 +26,43 @@ def callback_cam(msg):
         cols = int(msg.width)
         print('h',rows,'w',cols)
         num_data = []
-	for i in range(0,len(data),4):
-	  
-	    num_data.append(int(0.2989 * ord(data[i]) + 0.5870 * ord(data[i+1]) + 0.1140 * ord(data[i+2])))
-	
-	mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
+        
+        isAutoencoder = True
+        if isAutoencoder:
+            for i in range(0,len(data),4):
+                num_data.append(int(0.2989 * ord(data[i]) + 0.5870 * ord(data[i+1]) + 0.1140 * ord(data[i+2])))
+	    
+            mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
+            img_mat = img.fromarray(mat)
+            img_mat.thumbnail((64,64))
+            img_mat_data = img_mat.getdata()
+            
+        else:
+            data_r = []
+            data_g = []
+            data_b = []
+            for i in range(0,len(data),4):
+                data_r.append(ord(data[i]))
+                data_g.append(ord(data[i+1]))
+                data_b.append(ord(data[i+2]))
+            
+            num_data.extend(data_r)
+            num_data.extend(data_g)
+            num_data.extend(data_b)
+            
+            #mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,cols,-1))
 
-	img_mat = img.fromarray(mat)
-	img_mat.thumbnail((64,64))
-	
-	currInputs.append(list(img_mat.getdata()))
-	print('IMG SUCCESS')
+            #img_mat = img.fromarray(mat,'RGB')
+
+            #for RGB mode, img.getdata returns a 256x256 long array. each element is a 3 item tuple
+            
+            img_mat_data = num_data
+            print('num data',len(num_data))
+                     
+        currInputs.append(list(img_mat_data))
+        
+        
+        print('IMG SUCCESS')
     
 
 def callback_laser(msg):
@@ -48,30 +74,43 @@ def callback_laser(msg):
     min_range = min(rangesNum)
 
     if(min_range<0.2):	
-	import time
-	import os
-	obstacle_status_pub.publish(True)
-	time.sleep(0.1)
-	cmd = 'rosnode kill /save_data_node'
-	os.system(cmd)    
+        import time
+        import os
+        obstacle_status_pub.publish(True)
+        time.sleep(0.1)
+        cmd = 'rosnode kill /save_data_node'
+        os.system(cmd)
 	
-    if isMoving:    	
-	labels = [0 if val<2.9 else 1 for val in rangesNum]
-	
-	idx_of_1 = [i for i,val in enumerate(labels) if val==1]
-	while(len(idx_of_1)>=2):
-	    idx_of_1 = [i for i,val in enumerate(labels) if val==1]
-	    import random
-	    rand_idx = random.randint(0,len(idx_of_1)-1)
-	    labels[idx_of_1[rand_idx]]=0.0
-	    del idx_of_1[rand_idx]
-	if(1 in labels):	
-	    currLabels.append(labels.index(1))
-	else:
-	    currLabels.append(1)
-	    
-	print(currLabels)
-	print('Laser SUCCESS')    
+    if isMoving:
+        #print(rangesNum)
+        labels = [0,0,0]
+        if all(l>3.2 for l in rangesNum[0:15]):
+            labels[0] = 1
+        if all(l>3.9 for l in rangesNum[45:75]):
+            labels[1] = 1
+        if all(l>3.2 for l in rangesNum[105:120]):
+            labels[2] = 1
+        print(labels)            
+        
+        idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+        while(len(idx_of_1)>=2):
+            idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+            import random
+            rand_idx = random.randint(0,len(idx_of_1)-1)
+            labels[idx_of_1[rand_idx]]=0.0
+            del idx_of_1[rand_idx]
+        if(1 in labels):	
+            currLabels.append(labels.index(1))
+        else:
+            import time
+            import os
+            obstacle_status_pub.publish(True)
+            time.sleep(0.1)
+            cmd = 'rosnode kill /save_data_node'
+            os.system(cmd)
+            
+        print(currLabels)
+        print('Laser SUCCESS')    
     
 
 def callback_odom(msg):
