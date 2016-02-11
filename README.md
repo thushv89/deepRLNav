@@ -12,7 +12,7 @@ This a ros-python-c++ project for experimenting unsupervised obstacle navigation
 </ul>
 
 <strong>Keywords: </strong> ROS, Python, C++<br/>
-<strong>Dependencies: </strong> autonomy (ROS), amcl (ROS)
+<strong>Dependencies: </strong> python 2.7, autonomy (ROS), amcl (ROS)
 
 <h2>How to run</h2>
 <ol>
@@ -24,5 +24,23 @@ This a ros-python-c++ project for experimenting unsupervised obstacle navigation
 <li>Start rviz using <code>rosrun rviz rviz</code></li>
 <li>Do initial pose estimate with <strong>rviz</strong> (If necessary)</li>
 <li>Start autonomy package using <code>roslaunch</code></li>
+<li>run <code>atrv_save_data.py</code></li>
+<li>run <code>ra_dae</code>(Train.py) or <code>conv_nets</code>(ConvNet.py)</li>
+<li>run <code>move_robot_exec.py</code></li>
 </ol>
+
+<h2>How it works</h2>
+<ol>
+<li>Initiall, robot moves <code>step_size</code> straight</li>
+<li>Once it starts moving, atrv_save_data.py will collect data until robot stops. This is done by listening to <code>/camera/image</code> and <code>/obs_scan</code> topics.</li>
+<li>atrv_save_data.py will broadcast data on <code>data_inputs</code> and <code>data_labels</code> topics. And will broadcast True on <code>data_sent_status</code> topic</li>
+<li>Then, ra_dae or conv_net will be listening on <code>data_inputs</code>, <code>data_labels</code> and <code>data_sent_status</code> topics and will start running the algorithm as soon as data_sent_status is True.</li>
+<li>After running the algorithm for all the batches of data, once it is done, it will broadcast the output action on the topic <code>action_status</code></li>
+<li>Finally, move_robot_exec.py will receive the action from topic action_status and move the robot by <code>step_size</code> in the correct direction.</li>
+<li>The process repeats. </li>
+</ol>
+
+<h2>Few important stuff</h2>
+Changing the <code>step_size</code>: Variable available in the <code>move_robot.cpp</code> in move_robot package<br/>
+Restoring learning algorithm parameters (only for ra_dae): When running the ra_dae set --restore_last=1. Data is stored to a .pkl file. It has ((W,b,b_prime) of layers),(Initial sizes of layers),Q values, last_episode values in it.
 
