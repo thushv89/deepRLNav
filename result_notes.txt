@@ -1,0 +1,5 @@
+RL Autoencoder
+
+1 layer - 2048
+
+does pretty well after about 100-150 train batches (5 images per each)

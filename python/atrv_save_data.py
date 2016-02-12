@@ -16,7 +16,8 @@ from PIL import Image as img
 import math
 from rospy.numpy_msg import numpy_msg
 import sys
-    
+import scipy.misc as sm
+
 def callback_cam(msg):
     if isMoving:
         global currInputs
@@ -36,7 +37,10 @@ def callback_cam(msg):
             img_mat = img.fromarray(mat)
             img_mat.thumbnail((64,64))
             img_mat_data = img_mat.getdata()
-            
+            # use if you wann check images data coming have correct data (images)
+            #sm.imsave('img'+str(1)+'.jpg', np.asarray(num_data,dtype='uint8').reshape(256,-1))
+            #m.imsave('avg_img'+str(1)+'.jpg', np.asarray(list(img_mat_data)).reshape(64,-1))
+
         else:
             data_r = []
             data_g = []
@@ -72,40 +76,42 @@ def callback_laser(msg):
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
     min_range = min(rangesNum)
-
-    if(min_range<0.2):	
-        import time
-        import os
-        obstacle_status_pub.publish(True)
-        time.sleep(0.1)
-        cmd = 'rosnode kill /save_data_node'
-        os.system(cmd)
+    bump_thresh = 2.1
 	
+    #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
+    only_look_ahead = True
     if isMoving:
         #print(rangesNum)
-        labels = [0,0,0]
-        if all(l>3.2 for l in rangesNum[0:15]):
+        labels = [0,0,0]        
+        if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
             labels[0] = 1
-        if all(l>3.9 for l in rangesNum[45:75]):
+        if (l>bump_thresh for l in rangesNum[45:75]):
             labels[1] = 1
-        if all(l>3.2 for l in rangesNum[105:120]):
+        if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[105:120]):
             labels[2] = 1
         print(labels)            
         
-        idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+        idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
+        # if there are more than one 1 choose one randomly
         while(len(idx_of_1)>=2):
             idx_of_1 = [i for i,val in enumerate(labels) if val==1]
             import random
             rand_idx = random.randint(0,len(idx_of_1)-1)
             labels[idx_of_1[rand_idx]]=0.0
             del idx_of_1[rand_idx]
+        # if there is a one in labels
         if(1 in labels):	
             currLabels.append(labels.index(1))
-        else:
+        # if there is no 1 in labels
+
+
+        if np.min(rangesNum[45:75])<0.3:
             import time
             import os
-            obstacle_status_pub.publish(True)
+            save_data()
             time.sleep(0.1)
+            obstacle_status_pub.publish(True)
+            time.sleep(0.5)
             cmd = 'rosnode kill /save_data_node'
             os.system(cmd)
             
@@ -150,14 +156,7 @@ def callback_path_finish(msg):
         save_data()
   
 def save_data():
-    import time
-    '''import pickle
-    global currInputs
-    global currLabels
-    global pub
-    pickle.dump( [currInputs,currLabels], open( "data.pkl", "wb" ) )
-    print(currInputs)
-    print(currLabels)'''
+    import time    
     
     global currInputs
     global currLabels

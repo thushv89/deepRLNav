@@ -18,6 +18,7 @@ from rospy.numpy_msg import numpy_msg
 from std_msgs.msg import Bool
 from rospy_tutorials.msg import Floats
 from std_msgs.msg import Int16
+from math import ceil
 
 def make_shared(batch_x, batch_y, name, normalize, normalize_thresh=1.0):
     '''' Load data into shared variables '''
@@ -111,7 +112,7 @@ def create_image_from_vector(vec, dataset,turn_bw):
         imshow(np.reshape(new_vec*255,(-1,32)),cmap=cm.gray)
     show()
 
-def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learning_rate, model, modelType):
+def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learning_rate, model, modelType,input_avger):
     t_distribution = []
     start_time = time.clock()
 
@@ -120,17 +121,22 @@ def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learni
         results_func = model.error_func
 
         if modelType == 'DeepRL':
-            train_adaptive = model.train_func(arc, learning_rate, data_file[0], data_file[1], next_data_file[0], next_data_file[1], batch_size)
-            get_act_vs_pred_train_func = model.act_vs_pred_func(arc, data_file[0], data_file[1], batch_size)
-            get_params = model.get_param_values_func()
+
+            avg_inputs = np.empty((data_file[2],in_size),dtype=theano.config.floatX)
+            for t_batch_tmp in range(int(ceil(data_file[2] / batch_size))):
+                batch_before_avg = data_file[0].get_value()[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size]
+                batch_avg = input_avger.get_avg_input(theano.shared(batch_before_avg))
+                avg_inputs[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size] = batch_avg
+            th_avg_inputs = theano.shared(avg_inputs,name='avg_inputs')
+
+            #import scipy # use ifyou wanna check images are received correctly
+            #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
+            #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
+
+            train_adaptive = model.train_func(arc, learning_rate, th_avg_inputs, data_file[1], next_data_file[0], next_data_file[1], batch_size)
 
         elif modelType == 'SAE':
             pretrain_func,finetune_func,finetune_valid_func = model.train_func(arc, learning_rate, data_file[0], data_file[1], batch_size, False, next_data_file[0],next_data_file[1])
-            get_act_vs_pred_train_func = model.act_vs_pred_func(arc, data_file[0], data_file[1], batch_size)
-
-
-        if next_data_file[0] and next_data_file[1]:
-            validate_func = results_func(arc, next_data_file[0], next_data_file[1], batch_size)
 
 
         print('training data ...')
@@ -143,7 +149,7 @@ def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learni
                     epoch_start_time = time.clock()
                     print ('\n Fine Epoch: ', f_epoch)
                     fine_tune_costs = []
-                    for t_batch in range(int(math.ceil(data_file[2] / batch_size))):
+                    for t_batch in range(int(ceil(math.ceil(data_file[2] / batch_size)))):
                         train_batch_start_time = time.clock()
 
                         t_dist = Counter(data_file[1][t_batch * batch_size: (t_batch + 1) * batch_size].eval())
@@ -156,7 +162,8 @@ def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learni
 
                         train_batch_stop_time = time.clock()
                         print('\nTime for train batch ', t_batch, ': ', (train_batch_stop_time-train_batch_start_time), ' (secs)')
-                        episode=episode+1
+
+                        episode += 1
                     epoch_stop_time = time.clock()
                     print('Time for epoch ',f_epoch, ': ',(epoch_stop_time-epoch_start_time)/60,' (mins)')
                 action = test(data_file[0],arc,model,modelType)
@@ -187,7 +194,7 @@ def test(shared_data_file_x,arc,model, modelType):
     batch_size =1
     if modelType == 'DeepRL':
         get_action_func = model.get_predictions_func(arc, shared_data_file_x, batch_size)
-        last_idx = int(math.ceil(shared_data_file_x.eval().shape[0]/batch_size))-1
+        last_idx = int(ceil(shared_data_file_x.eval().shape[0]/batch_size))-1
         print('Last idx: ',last_idx)
         probs = get_action_func(last_idx)
         print('[test] Probs: ', probs)
@@ -208,12 +215,14 @@ def run(data_file):
         action = -1
         global train_for
         if shared_data_file and shared_data_file[2]>0 and episode<train_for:
-            action = train(batch_size, shared_data_file, next_data_file, pre_epochs, finetune_epochs, learning_rate, model, modelType)
+            action = train(batch_size, shared_data_file, next_data_file,
+                           pre_epochs, finetune_epochs, learning_rate, model, modelType, input_avger)
         elif shared_data_file and shared_data_file[2]>0 and episode>=train_for:
             action = test(shared_data_file[0],1,model,modelType)
 
         global persist_complete
-        if episode > 5 and not persist_complete:
+        global train_for
+        if episode >= train_for and not persist_complete:
             print('Persist parameters')
             persist_parameters(model.layers,model._controller)
             persist_complete = True
@@ -232,19 +241,21 @@ def callback_data_save_status(msg):
     if data_inputs.shape[0] != data_labels.shape[0]:
         print('data and label counts are different. correcting')
         if label_count >input_count:
-            for del_i in range(-1,input_count-label_count-1):
-                np.delete(data_labels,del_i,0)
+            for _ in range(-1,input_count-label_count-1):
+                data_labels = np.delete(data_labels,-1,0)
         if label_count < input_count:
-            for del_i in range(-1,input_count-label_count-1):
-                np.delete(data_inputs,del_i,0)
+            for _ in range(-1,input_count-label_count-1):
+                data_inputs = np.delete(data_inputs,-1,0)
 
     run([data_inputs,data_labels])
 
 def callback_data_inputs(msg):
     global data_inputs
     global in_size
-    data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((in_size,-1))/255.
-    data_inputs = data_inputs.T
+    data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((-1,in_size))/255.
+    data_inputs = data_inputs
+    #import scipy # use if you wanna check algo receive images correctly
+    #scipy.misc.imsave('rec_img'+str(episode)+'.jpg', data_inputs[-1].reshape(64,-1)*255)
     print('Recieved. Input size: ',data_inputs.shape)
 
 def callback_data_labels(msg):
@@ -267,24 +278,28 @@ persist_complete = False
 if __name__ == '__main__':
 
     global restore_last
-    restore_last = False
     global train_for
-    train_for = 150
+
 
     import getopt
     import sys
+    from input_averager import InputAverager
+
     try:
         opts,args = getopt.getopt(sys.argv[1:],"",["restore_last=","train_for="])
     except getopt.GetoptError:
-        print('<filename>.py --restore_last <1 or 0> --train_for <int>')
+        print('<filename>.py --restore_last=<1 or 0> --train_for=<int>')
         sys.exit(2)
 
     #when I run in command line
     if len(opts)!=0:
         for opt,arg in opts:
             if opt == '--restore_last':
-                restore_last = bool(arg)
-            if opt == '--restore_last':
+                print('restore_last: ',arg)
+                restore_last = bool(int(arg))
+                print('bool: ',restore_last)
+            if opt == '--train_for':
+                print('train_for: ',arg)
                 train_for = int(arg)
 
 
@@ -308,6 +323,9 @@ if __name__ == '__main__':
     pre_epochs = 5
     finetune_epochs = 1
 
+    last_batches_pool_size = 5
+    last_batches_pool = []
+
     layers_str = str(in_size) + ', '
     for s in hid_sizes:
         layers_str += str(s) + ', '
@@ -319,8 +337,10 @@ if __name__ == '__main__':
         restore_data = pickle.load( open( "params.pkl", "rb" ) )
         model = make_model(modelType,in_size, hid_sizes, out_size, batch_size,corruption_level,lam,iterations,pool_size,restore_data=restore_data)
     else:
-        model = make_model(modelType,in_size, hid_sizes, out_size, batch_size,corruption_level,lam,iterations,pool_size)
+        model = make_model(modelType,in_size, hid_sizes, out_size, batch_size,corruption_level,lam,iterations,pool_size,restore_data=None)
 
+    batch_count = 5
+    input_avger = InputAverager(batch_count,batch_size,in_size)
 
     model_info = '---------- Model Information -------------\n'
     model_info += 'Model type: ' + modelType + '\n'
