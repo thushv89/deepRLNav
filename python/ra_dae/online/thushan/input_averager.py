@@ -19,7 +19,9 @@ class InputAverager(object):
         print('position before add: ',self.position)
         print('adding data of size: ', x.get_value().shape[0])
         if self.position + x.get_value().shape[0] > self.size:
-            x = x[:(self.size-self.position),:]
+            get_portion_fn = theano.function(inputs=[],outputs=x[:(self.size-self.position),:])
+            x = theano.shared(get_portion_fn())
+            #x = x[:(self.size-self.position),:]
         self.pool = T.set_subtensor(self.pool[self.position:self.position+x.shape[0],:],x)
         self.position = (self.position + x.get_value().shape[0])%self.size
 
