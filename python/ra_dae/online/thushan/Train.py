@@ -121,14 +121,16 @@ def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learni
         results_func = model.error_func
 
         if modelType == 'DeepRL':
-
+            print('[train]data_file size', data_file[2])
             avg_inputs = np.empty((data_file[2],in_size),dtype=theano.config.floatX)
-            for t_batch_tmp in range(int(ceil(data_file[2] / batch_size))):
+            n_train_b = int(ceil(data_file[2]*1.0 / batch_size))
+            print('[train] n_train_b : ',n_train_b)
+            for t_batch_tmp in range(n_train_b):
                 batch_before_avg = data_file[0].get_value()[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size]
                 batch_avg = input_avger.get_avg_input(theano.shared(batch_before_avg))
                 avg_inputs[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size] = batch_avg
             th_avg_inputs = theano.shared(avg_inputs,name='avg_inputs')
-
+            print('[train]avg_in size',avg_inputs.shape)
             #import scipy # use ifyou wanna check images are received correctly
             #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
             #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
@@ -195,7 +197,7 @@ def test(shared_data_file_x,arc,model, modelType):
     if modelType == 'DeepRL':
         get_action_func = model.get_predictions_func(arc, shared_data_file_x, batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]/batch_size))-1
-        print('Last idx: ',last_idx)
+        print('[test] Last idx: ',last_idx)
         probs = get_action_func(last_idx)
         print('[test] Probs: ', probs)
         print('[test] Action got: ', np.argmax(probs),'\n')
@@ -223,7 +225,7 @@ def run(data_file):
         global persist_complete
         global train_for
         if episode >= train_for and not persist_complete:
-            print('Persist parameters')
+            print('[run] Persist parameters')
             persist_parameters(model.layers,model._controller)
             persist_complete = True
     else:
@@ -239,7 +241,7 @@ def callback_data_save_status(msg):
     input_count = data_inputs.shape[0]
     label_count = data_labels.shape[0]
     if data_inputs.shape[0] != data_labels.shape[0]:
-        print('data and label counts are different. correcting')
+        print('[callback data_save] data and label counts are different. correcting')
         if label_count >input_count:
             for _ in range(-1,input_count-label_count-1):
                 data_labels = np.delete(data_labels,-1,0)
