@@ -45,7 +45,7 @@ def load_from_pickle(filename):
 
         return train, valid, test
 
-def make_layers(in_size, hid_sizes, out_size, zero_last = False, layer_params = None, init_sizes = None):
+def make_layers(in_size, hid_sizes, out_size, zero_last = False, layer_params = None, init_sizes = None, modelType="DeepRLMultiLogreg"):
     layers = []
     if layer_params is not None:
         W,b,b_prime = layer_params[0]
@@ -56,6 +56,7 @@ def make_layers(in_size, hid_sizes, out_size, zero_last = False, layer_params = 
         layers.append(NNLayer.Layer(in_size, W.shape[1], False, W, b, b_prime,init_sizes[0]))
     else:
         layers.append(NNLayer.Layer(in_size, hid_sizes[0], False, None, None, None))
+
     for i, size in enumerate(hid_sizes,0):
         if i==0: continue
         if layer_params is not None:
@@ -68,7 +69,13 @@ def make_layers(in_size, hid_sizes, out_size, zero_last = False, layer_params = 
         else:
             layers.append(NNLayer.Layer(hid_sizes[i-1], hid_sizes[i], False, None, None, None))
 
-    layers.append(NNLayer.Layer(hid_sizes[-1], out_size, True, None, None, None))
+    if modelType is not 'DeepRLMultiLogreg':
+        layers.append(NNLayer.Layer(hid_sizes[-1], out_size, True, None, None, None))
+    else:
+        layers.append([NNLayer.Layer(hid_sizes[-1],2) for _ in range(out_size)])
+        print('[make_layers] layer size: ',len(layers))
+        print('[make_layers] layer 0 initial size: ',layers[0].initial_size)
+        print('[make_layers] added ',len(layers[-1]),' layers for last layer')
     print('Finished Creating Layers')
 
     return layers
@@ -84,7 +91,7 @@ def make_model(model_type,in_size, hid_sizes, out_size,batch_size, corruption_le
         layers = make_layers(in_size, hid_sizes, out_size, False, layer_params, init_sizes)
     else:
         policy = RLPolicies.ContinuousState()
-        layers = make_layers(in_size, hid_sizes, out_size, False, None)
+        layers = make_layers(in_size, hid_sizes, out_size, False, None,model_type)
 
     if model_type == 'DeepRL':
         model = DLModels.DeepReinforcementLearningModel(
@@ -94,25 +101,20 @@ def make_model(model_type,in_size, hid_sizes, out_size,batch_size, corruption_le
             layers,corruption_level,rng,lam,iterations)
     elif model_type == 'MergeInc':
         model = DLModels.MergeIncDAE(layers, corruption_level, rng, iterations, lam, batch_size, pool_size)
+    elif model_type == 'DeepRLMultiLogreg':
+        policies = [RLPolicies.ContinuousState() for _ in range(out_size)]
+        model = DLModels.DeepRLWithMultiLogReg(
+            layers, corruption_level, rng, iterations, lam, batch_size, pool_size, policies,0.7
+        )
 
     model.process(T.matrix('x'), T.ivector('y'))
 
     return model
 
+# KEEP THIS AS 1 otherwise can lead to issues
+last_action = 1 # this is important for DeepRLMultiLogreg
 
-def create_image_from_vector(vec, dataset,turn_bw):
-    from pylab import imshow,show,cm
-    if dataset == 'mnist':
-        imshow(np.reshape(vec*255,(-1,28)),cmap=cm.gray)
-    elif dataset == 'cifar-10':
-        if not turn_bw:
-            new_vec = 0.2989 * vec[0:1024] + 0.5870 * vec[1024:2048] + 0.1140 * vec[2048:3072]
-        else:
-            new_vec = vec
-        imshow(np.reshape(new_vec*255,(-1,32)),cmap=cm.gray)
-    show()
-
-def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learning_rate, model, modelType,input_avger):
+def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, modelType,input_avger):
     t_distribution = []
     start_time = time.clock()
 
@@ -120,63 +122,90 @@ def train(batch_size, data_file, next_data_file, pre_epochs, fine_epochs, learni
         v_errors = []
         results_func = model.error_func
 
+        avg_inputs = np.empty((data_file[2],in_size),dtype=theano.config.floatX)
+        n_train_b = int(ceil(data_file[2]*1.0 / batch_size))
+
+        for t_batch_tmp in range(n_train_b):
+            batch_before_avg = data_file[0].get_value()[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size]
+            batch_avg = input_avger.get_avg_input(theano.shared(batch_before_avg))
+            avg_inputs[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size] = batch_avg
+        th_avg_inputs = theano.shared(avg_inputs,name='avg_inputs')
+        print('[train]avg_in size',avg_inputs.shape)
+
         if modelType == 'DeepRL':
-            print('[train]data_file size', data_file[2])
-            avg_inputs = np.empty((data_file[2],in_size),dtype=theano.config.floatX)
-            n_train_b = int(ceil(data_file[2]*1.0 / batch_size))
-            print('[train] n_train_b : ',n_train_b)
-            for t_batch_tmp in range(n_train_b):
-                batch_before_avg = data_file[0].get_value()[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size]
-                batch_avg = input_avger.get_avg_input(theano.shared(batch_before_avg))
-                avg_inputs[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size] = batch_avg
-            th_avg_inputs = theano.shared(avg_inputs,name='avg_inputs')
-            print('[train]avg_in size',avg_inputs.shape)
+
             #import scipy # use ifyou wanna check images are received correctly
             #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
             #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
 
-            train_adaptive = model.train_func(arc, learning_rate, th_avg_inputs, data_file[1], next_data_file[0], next_data_file[1], batch_size)
+            train_adaptive = model.train_func(arc, learning_rate, th_avg_inputs, data_file[1], None, None, batch_size)
+
+        elif modelType == 'DeepRLMultiLogreg':
+
+            #import scipy # use ifyou wanna check images are received correctly
+            #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
+            #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
+
+            train_adaptive,train_sec_adaptive = model.train_func(arc, learning_rate, th_avg_inputs, data_file[1], None, None, batch_size)
 
         elif modelType == 'SAE':
-            pretrain_func,finetune_func,finetune_valid_func = model.train_func(arc, learning_rate, data_file[0], data_file[1], batch_size, False, next_data_file[0],next_data_file[1])
+            pretrain_func,finetune_func,finetune_valid_func = model.train_func(arc, learning_rate, data_file[0], data_file[1], batch_size, False, None,None)
 
 
-        print('training data ...')
+        print('[train] Training data ...')
         try:
             if modelType == 'DeepRL':
 
                 from collections import Counter
 
-                for f_epoch in range(fine_epochs):
-                    epoch_start_time = time.clock()
-                    print ('\n Fine Epoch: ', f_epoch)
-                    fine_tune_costs = []
-                    for t_batch in range(int(ceil(math.ceil(data_file[2] / batch_size)))):
-                        train_batch_start_time = time.clock()
+                for t_batch in range(int(ceil(math.ceil(data_file[2] / batch_size)))):
 
-                        t_dist = Counter(data_file[1][t_batch * batch_size: (t_batch + 1) * batch_size].eval())
-                        t_distribution.append({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()})
-                        model.set_train_distribution(t_distribution)
-                        global episode
-                        print('Train batch: ', episode, ' Distribution: ', t_dist)
+                    t_dist = Counter(data_file[1][t_batch * batch_size: (t_batch + 1) * batch_size].eval())
+                    t_distribution.append({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()})
+                    model.set_train_distribution(t_distribution)
+                    global episode
 
-                        train_adaptive(t_batch,episode)
+                    train_adaptive(t_batch)
+                    episode += 1
 
-                        train_batch_stop_time = time.clock()
-                        print('\nTime for train batch ', t_batch, ': ', (train_batch_stop_time-train_batch_start_time), ' (secs)')
-
-                        episode += 1
-                    epoch_stop_time = time.clock()
-                    print('Time for epoch ',f_epoch, ': ',(epoch_stop_time-epoch_start_time)/60,' (mins)')
                 action = test(data_file[0],arc,model,modelType)
-                print("Action returned: ", action)
+                print("[DeepRL] Action returned: ", action)
+                return action
+
+            elif modelType == 'DeepRLMultiLogreg':
+                global last_action
+                from collections import Counter
+
+                for t_batch in range(int(ceil(math.ceil(data_file[2] / batch_size)))):
+
+                    t_dist = Counter(data_file[1][t_batch * batch_size: (t_batch + 1) * batch_size].eval())
+                    t_distribution.append({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()})
+
+                    model.set_train_distribution(t_distribution,last_action)
+                    global episode
+
+                    # if last action is 1, we don't bother with secondary networks
+                    print('[train] last action: ',last_action)
+                    if last_action == 1:
+                        train_adaptive(t_batch)
+                    episode += 1
+
+                if last_action != 1: # now we train the secondary network
+                    for prev_t_batch in range(int(ceil(math.ceil(prev_data_file[2] / batch_size)))):
+                        print('[train] train secondary nets')
+                        train_sec_adaptive(prev_t_batch,last_action)
+                    episode += 1
+
+                action = test(data_file[0],arc,model,modelType)
+                print("[DeepRLMultiLogreg] Action returned: ", action)
+                last_action = action
                 return action
 
         except StopIteration:
             pass
 
     end_time = time.clock()
-    print('\nTime taken for the data stream: ', (end_time-start_time)/60, ' (mins)')
+    print('\n[train] Time taken for the episode: ', (end_time-start_time)/60, ' (mins)')
     return
 
 def persist_parameters(layers,policy):
@@ -194,16 +223,17 @@ def persist_parameters(layers,policy):
 
 def test(shared_data_file_x,arc,model, modelType):
     batch_size =1
-    if modelType == 'DeepRL':
+    if modelType == 'DeepRL' or 'DeepRLMultiLogreg':
         get_action_func = model.get_predictions_func(arc, shared_data_file_x, batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]/batch_size))-1
         print('[test] Last idx: ',last_idx)
         probs = get_action_func(last_idx)
         print('[test] Probs: ', probs)
         print('[test] Action got: ', np.argmax(probs),'\n')
+
         return np.argmax(probs)
 
-def run(data_file):
+def run(data_file,prev_data_file):
     global episode
     if data_file[1].shape[0]>0:
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
@@ -212,12 +242,15 @@ def run(data_file):
         print("[run] Label size: ", shared_data_file[1].eval().shape)
         print("[run] Count: ", shared_data_file[2])
         valid_file = [None,None]
-        next_data_file = shared_data_file
+        if prev_data_file is not None:
+            prev_shared_data_file = make_shared(prev_data_file[0],prev_data_file[1],'prev_inputs',False)
+        else:
+            prev_shared_data_file = None
 
         action = -1
         global train_for
         if shared_data_file and shared_data_file[2]>0 and episode<train_for:
-            action = train(batch_size, shared_data_file, next_data_file,
+            action = train(batch_size, shared_data_file, prev_shared_data_file,
                            pre_epochs, finetune_epochs, learning_rate, model, modelType, input_avger)
         elif shared_data_file and shared_data_file[2]>0 and episode>=train_for:
             action = test(shared_data_file[0],1,model,modelType)
@@ -232,10 +265,11 @@ def run(data_file):
         action=1
     action_pub.publish(action)
 
-
+prev_data = None
 def callback_data_save_status(msg):
     global data_inputs
     global data_labels
+    global prev_data
 
     print('Running DeepRL ...')
     input_count = data_inputs.shape[0]
@@ -243,13 +277,21 @@ def callback_data_save_status(msg):
     if data_inputs.shape[0] != data_labels.shape[0]:
         print('[callback data_save] data and label counts are different. correcting')
         if label_count >input_count:
-            for _ in range(-1,input_count-label_count-1):
+            for _ in range(input_count-label_count):
                 data_labels = np.delete(data_labels,-1,0)
         if label_count < input_count:
-            for _ in range(-1,input_count-label_count-1):
+            for _ in range(input_count-label_count):
                 data_inputs = np.delete(data_inputs,-1,0)
 
-    run([data_inputs,data_labels])
+
+    print('callback currdata: ',data_inputs.shape,' ,',data_labels.shape)
+    if prev_data is not None:
+        print('callback prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape)
+
+    run([data_inputs,data_labels],prev_data)
+    prev_data = [data_inputs,data_labels]
+
+
 
 def callback_data_inputs(msg):
     global data_inputs
@@ -308,7 +350,7 @@ if __name__ == '__main__':
     in_size = 4096
     out_size = 3
 
-    modelType = 'DeepRL'
+    modelType = 'DeepRLMultiLogreg'
 
     learning_rate = 0.2
     batch_size = 5

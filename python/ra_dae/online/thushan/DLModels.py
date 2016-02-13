@@ -307,21 +307,6 @@ class Softmax(Transformer):
 
         return None
 
-    def get_y_as_vec_func(self, y,batch_size):
-
-        self.y_mat = theano.shared(np.zeros((batch_size,10),dtype=theano.config.floatX))
-        one_vec = T.ones_like(self._y)
-
-        idx = T.iscalar('idx')
-
-        y_mat_update = [(self.y_mat, T.inc_subtensor(self.y_mat[T.arange(self._y.shape[0]), self._y],1))]
-
-        given = {
-            self._y : y[idx * batch_size : (idx + 1) * batch_size]
-        }
-
-        return theano.function(inputs=[idx],outputs=[], updates=y_mat_update, givens=given, on_unused_input='warn')
-
     def train_func(self, arc, learning_rate, x, y, batch_size, transformed_x=identity, iterations=None):
 
         if iterations is None:
@@ -866,6 +851,8 @@ class DeepReinforcementLearningModel(Transformer):
 
         self.neuron_balance = 1
 
+        self.episode = 0
+
     def process(self, x, y):
         self._x = x
         self._y = y
@@ -995,14 +982,14 @@ class DeepReinforcementLearningModel(Transformer):
         norm_dist = {str(k): v / sum(dist.values()) for k, v in dist.items()}
         return norm_dist
 
-    def train_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, apply_x=identity):
+    def train_func(self, arc, learning_rate, x, y, batch_size, apply_x=identity):
         batch_pool = Pool(self.layers[0].initial_size[0], batch_size)
 
         train_func = self._softmax.train_func(arc, learning_rate, x, y, batch_size, apply_x)
 
         reconstruction_func = self._autoencoder.validate_func(arc, x, y, batch_size, apply_x)
         error_func = self.error_func(arc, x, y, batch_size, apply_x)
-        valid_error_func = self.error_func(arc,v_x,v_y, batch_size, apply_x)
+        #valid_error_func = self.error_func(arc,v_x,v_y, batch_size, apply_x)
 
         merge_inc_func_batch = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, x, y)
         merge_inc_func_pool = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, self._pool.data, self._pool.data_y)
@@ -1010,11 +997,13 @@ class DeepReinforcementLearningModel(Transformer):
 
         hard_examples_func = self._autoencoder.get_hard_examples(arc, x, y, batch_size, apply_x)
 
+        # causing touble with multi log reg########################
         train_func_pool = self._softmax.train_func(arc, learning_rate, self._pool.data, self._pool.data_y, batch_size, apply_x)
         train_func_hard_pool = self._softmax.train_func(arc, learning_rate, self._hard_pool.data, self._hard_pool.data_y, batch_size, apply_x)
         train_func_diff_pool = self._softmax.train_func(arc, learning_rate, self._diff_pool.data, self._diff_pool.data_y, batch_size, apply_x)
-
+        ##########################################
         def train_pool(pool, pool_func, amount):
+            print('[train_pool] pool size: ',int(pool.size),', ',amount)
             pool_indexes = pool.as_size(int(pool.size * amount), batch_size)
             #print('index before shuffle: ', pool_indexes)
             np.random.shuffle(pool_indexes)
@@ -1029,10 +1018,9 @@ class DeepReinforcementLearningModel(Transformer):
             return np.convolve(log, weights)[n-1:-n+1]
 
         # get early stopping
-        def train_adaptively(batch_id,epoch):
+        def train_adaptively(batch_id):
 
             self._error_log.append(np.asscalar(error_func(batch_id)))
-            self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
 
             rec_err = reconstruction_func(batch_id)
             #print('Reconstruction Error: ',rec_err,', batch id: ', batch_id)
@@ -1040,12 +1028,18 @@ class DeepReinforcementLearningModel(Transformer):
             self._neuron_balance_log.append(self.neuron_balance)
 
             batch_pool.add_from_shared(batch_id, batch_size, x, y)
+            print('xshape', x.get_value().shape[0],' y shape',y.eval().shape[0])
+
             self._pool.add_from_shared(batch_id, batch_size, x, y)
             self._hard_pool.add(*hard_examples_func(batch_id))
 
             #print('size before pool_if_diff: ',self._diff_pool.size)
             self.pool_if_different(self._diff_pool,self.pool_distribution,batch_id,self.train_distribution[-1], batch_size, x, y)
             #print('size after pool_if_diff: ',self._diff_pool.size)
+
+            print('[train_adaptively] self.pool: ',self._pool.size, ',', self._pool.position, ',', self._pool.max_size)
+            print('[train_adaptively] self.diff_pool: ',self._diff_pool.size, ',', self._diff_pool.position, ',', self._diff_pool.max_size)
+            print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
             data = {
                 'mea_30': moving_average(self._error_log, 30),
@@ -1087,13 +1081,14 @@ class DeepReinforcementLearningModel(Transformer):
             }
 
             #this is where reinforcement learning comes to play
-            self._controller.move(epoch, data, funcs)
+            print('[train_adaptively] batch id',batch_id,' episode: ',self.episode)
+            self._controller.move(self.episode, data, funcs)
+
 
             train_func(batch_id)
 
-
             self._network_size_log.append(self.layers[0].W.get_value().shape[1])
-            return self._valid_error_log[-1]
+            self.episode += 1
 
         return train_adaptively
 
@@ -1120,6 +1115,99 @@ class DeepReinforcementLearningModel(Transformer):
         for i,layer in enumerate(self.layers):
             params.append([layer.W.get_value(),layer.b.get_value(),layer.b_prime.get_value()])
         return params
+
+class DeepRLWithMultiLogReg(DeepReinforcementLearningModel):
+
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size, controllers,simi_thresh = 0.7):
+        self.arcs = 1
+        self.models = []
+        for l_i,out_l in enumerate(layers[-1]):
+            layers_tmp = []
+            layers_tmp.extend(layers[:-1])
+            print('[init] layers_tmp: ',len(layers_tmp))
+            layers_tmp.append(out_l)
+            print('[init] layer 0 initial size: ',layers_tmp[1].initial_size)
+            self.models.append(DeepReinforcementLearningModel(
+                layers_tmp,corruption_level,rng,iterations,lam,mi_batch_size,pool_size,
+                controllers[l_i],simi_thresh))
+
+        self._mi_batch_size = mi_batch_size
+
+    def process(self, x, y):
+        self._x = x
+        self._y = y
+        for model in self.models:
+            model.process(x,y)
+
+    def train_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, apply_x=identity):
+
+        idx = T.iscalar('idx')
+        batch_mean = T.mean(self._y)
+        check_fwd_func = theano.function(inputs=[idx],outputs=batch_mean,givens={
+                self._y:y[idx*batch_size:(idx+1)*batch_size]
+            })
+
+        print('[train_func] models: ',len(self.models))
+        def train_adaptively(batch_id):
+            #NOTE: we might need to have separate epoch variables for each model
+            #find the correct model and call train adaptively in DeepRL
+
+            forward = [True if check_fwd_func(batch_id)>0.5 else False]
+            print('[train_adaptively] can we go fwd? ',forward)
+            print('[train_adaptively] models: ',len(self.models))
+            if forward:
+                train_adaptive_func = self.models[1].train_func(arc, learning_rate, x, y, batch_size, apply_x)
+                train_adaptive_func(batch_id)
+                return -1
+            else:
+
+                for m_i in [0,2]:
+                    #get the output without testing
+                    outlist = self.models[m_i].get_predictions_func(self, arc, x, batch_size, apply_x)
+                    print('[train_adaptively] outlist: ',outlist)
+                    output_max_args = np.argmax(outlist,axis=0)
+                    output = 1 if np.mean(output_max_args)>0.5 else 0
+                    # means we can move in that direction
+                    if output == 1:
+                        #send this action
+                        print('[train_adaptively] got out 1 for ',m_i, ' sec network ')
+                        return m_i
+
+                print('[train_adaptively] no secondary net gave 1, returning last net')
+                return m_i
+
+
+
+        def train_secondary_adaptively(batch_id,m):
+            # NOTE: we could use only the last batch. right now using all
+            # call this method with previous batches if most of y values are 0s in the next batches
+
+            correct = [True if check_fwd_func(batch_id)>0.5 else False]
+            print('[train_secondary_adap] correct? ',correct)
+            #create new Y values
+            if correct:
+                new_y = [1 for _ in range(x.get_value().shape[0])]
+                th_new_y = T.cast(theano.shared(np.asarray(new_y,dtype=theano.config.floatX)),'int32')
+            else:
+                new_y = [0 for _ in range(x.get_value().shape[0])]
+                th_new_y = T.cast(theano.shared(np.asarray(new_y,dtype=theano.config.floatX)),'int32')
+
+            train_adaptive_func2 = self.models[m].train_func(arc, learning_rate, x, th_new_y, batch_size, apply_x)
+
+            train_adaptive_func2(batch_id)
+
+
+        return train_adaptively,train_secondary_adaptively
+
+
+    def set_train_distribution(self, t_distribution,m):
+        self.models[m].train_distribution = t_distribution
+
+    def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
+        all_outs = []
+        for m in self.models:
+            out = m._softmax.get_predictions_func(arc, x, None, batch_size, transformed_x)
+        return all_outs.append(out)
 
 class MergeIncDAE(Transformer):
 

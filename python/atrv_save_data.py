@@ -77,18 +77,18 @@ def callback_laser(msg):
     rangesNum.reverse()
     min_range = min(rangesNum)
     bump_thresh = 2.1
-	
+    algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
     only_look_ahead = True
     if isMoving:
         #print(rangesNum)
         labels = [0,0,0]        
         if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
-            labels[0] = 1
+            labels[0] = 0
         if (l>bump_thresh for l in rangesNum[45:75]):
             labels[1] = 1
         if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[105:120]):
-            labels[2] = 1
+            labels[2] = 0
         print(labels)            
         
         idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
@@ -100,10 +100,11 @@ def callback_laser(msg):
             labels[idx_of_1[rand_idx]]=0.0
             del idx_of_1[rand_idx]
         # if there is a one in labels
-        if(1 in labels):	
-            currLabels.append(labels.index(1))
+        if(1 in labels):
+            currLabels.append(1)
         # if there is no 1 in labels
-
+        else:
+            currLabels.append(0)
 
         if np.min(rangesNum[45:75])<0.3:
             import time
