@@ -140,12 +140,12 @@ class ContinuousState(Controller):
 
         if to_move<1./data['initial_size']:
             print('To move is too small')
-            funcs['pool_finetune'](1)
+            funcs['pool'](1)
             action = self.Action.pool
             
         else:
             if action == self.Action.pool:
-                funcs['pool_finetune'](1)
+                funcs['pool'](1)
             elif action == self.Action.reduce:
                 # method signature: amount, to_merge, to_inc
                 # introducing division by two to reduce the impact

@@ -76,29 +76,36 @@ def callback_laser(msg):
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
     min_range = min(rangesNum)
-    bump_thresh = 2.1
+    bump_thresh = 0.8
     algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
     only_look_ahead = True
     if isMoving:
         #print(rangesNum)
-        labels = [0,0,0]        
-        if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
-            labels[0] = 0
-        if (l>bump_thresh for l in rangesNum[45:75]):
-            labels[1] = 1
-        if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[105:120]):
-            labels[2] = 0
+        labels = [0,0,0]
+        obstacle = False
+        for l in rangesNum[45:75]:
+            if l < bump_thresh:
+                obstacle = True
+        #if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
+        #    labels[0] = 0
+        #if (l<bump_thresh for l in rangesNum[45:75]):
+        #    labels[1] = 1
+        #if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[105:120]):
+        #    labels[2] = 0
+        if not obstacle:
+            labels = [0,1,0]
         print(labels)            
         
-        idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
+        #idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
         # if there are more than one 1 choose one randomly
-        while(len(idx_of_1)>=2):
-            idx_of_1 = [i for i,val in enumerate(labels) if val==1]
-            import random
-            rand_idx = random.randint(0,len(idx_of_1)-1)
-            labels[idx_of_1[rand_idx]]=0.0
-            del idx_of_1[rand_idx]
+        #while(len(idx_of_1)>=2):
+        #    idx_of_1 = [i for i,val in enumerate(labels) if val==1]
+        #    import random
+        #    rand_idx = random.randint(0,len(idx_of_1)-1)
+        #    labels[idx_of_1[rand_idx]]=0.0
+        #    del idx_of_1[rand_idx]
+
         # if there is a one in labels
         if(1 in labels):
             currLabels.append(1)

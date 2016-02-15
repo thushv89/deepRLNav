@@ -283,13 +283,12 @@ class Softmax(Transformer):
 
         self.theta = None
         self.results = None
-        self._errors = None
+        #self._errors = None
         self.cost_vector = None
         self.cost = None
         self.iterations = iterations
         self.last_out = None
         self.p_y_given_x = None
-        self.y_mat = None
 
     def process(self, x, y):
         self._x = x
@@ -298,11 +297,10 @@ class Softmax(Transformer):
         self.last_out = chained_output(self.layers, x);
         self.p_y_given_x = T.nnet.softmax(chained_output(self.layers, x))
 
-        self.results = T.argmax(self.p_y_given_x, axis=1)
-
         self.theta = [param for layer in self.layers for param in [layer.W, layer.b]]
-        self._errors = T.mean(T.neq(self.results,y))
-        self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+        #self._errors = T.mean(T.neq(self.results,y))
+        #self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+        self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x,y)
         self.cost = T.mean(self.cost_vector)
 
         return None
@@ -319,38 +317,12 @@ class Softmax(Transformer):
         ''' because func inside iteration_shim didn't return anything at the moment '''
         return iterations_shim(train, iterations)
 
-    def train_with_early_stop_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, transformed_x=identity, iterations=None):
-        if iterations is None:
-            iterations = self.iterations
-
-        updates = [(param, param - learning_rate*grad) for param, grad in zip(self.theta, T.grad(self.cost,wrt=self.theta))]
-
-        train = self.make_func(x,y,batch_size,self.cost,updates,transformed_x)
-        validate = self.make_func(v_x, v_y, batch_size, self.cost, None, transformed_x)
-
-        valid_size = v_y.get_value().shape[0]/batch_size
-
-        return iterations_shim_early_stopping(train, validate, valid_size, iterations, 10)
-
-    def train_with_early_stop_func_v2(self, arc, learning_rate, x, y, v_x, v_y, batch_size, transformed_x=identity, iterations=None):
-        if iterations is None:
-            iterations = self.iterations
-
-        updates = [(param, param - learning_rate*grad) for param, grad in zip(self.theta, T.grad(self.cost,wrt=self.theta))]
-
-        train = self.make_func(x,y,batch_size,self.cost,updates,transformed_x)
-        validate = self.make_func(v_x, v_y, batch_size, self.cost, None, transformed_x)
-
-        return [train, validate]
 
     def validate_func(self, arc, x, y, batch_size, transformed_x=identity):
         return self.make_func(x,y,batch_size,self.cost,None,transformed_x)
 
     def error_func(self, arc, x, y, batch_size, transformed_x = identity):
-        return self.make_func(x,y,batch_size,self._errors,None, transformed_x)
-
-    def act_vs_pred_func(self, arc, x, y, batch_size, transformed_x = identity):
-        return self.make_func(x,y,batch_size,[self._y,self.results],None, transformed_x)
+        return self.make_func(x,y,batch_size,self.cost,None, transformed_x)
 
     def get_y_labels(self, act, x, y, batch_size, transformed_x = identity):
         return self.make_func(x, y, batch_size, self._y, None, transformed_x)
@@ -365,18 +337,18 @@ class Pool(object):
 
     #theano.config.compute_test_value = 'warn'
     ''' A ring buffer (Acts as a Queue) '''
-    __slots__ = ['size', 'max_size', 'position', 'data', 'data_y', '_update']
+    __slots__ = ['size', 'max_size', 'num_classes','position', 'data', 'data_y', '_update']
 
-    def __init__(self, row_size, max_size):
+    def __init__(self, row_size, max_size,num_classes):
         self.size = 0
         self.max_size = max_size
         self.position = 0
 
         self.data = theano.shared(np.empty((max_size, row_size), dtype=theano.config.floatX), 'pool' )
-        self.data_y = theano.shared(np.empty(max_size, dtype='int32'), 'pool_y')
+        self.data_y = theano.shared(np.empty((max_size,num_classes), dtype=theano.config.floatX), 'pool_y')
 
         x = T.matrix('new_data')
-        y = T.ivector('new_data_y')
+        y = T.matrix('new_data_y')
         pos = T.iscalar('update_index')
 
         # update statement to add new data from the position of the last data point
@@ -534,7 +506,7 @@ class MergeIncrementingAutoencoder(Transformer):
 
     def merge_inc_func(self, learning_rate, batch_size, x, y):
 
-        m = T.matrix('m')
+        m = T.fmatrix('m')
         # map operation applies a certain function to a sequence. This is the upper part of cosine dist eqn
         m_dists, _ = theano.map(lambda v: T.sqrt(T.dot(v, v.T)), m)
         # dimshuffle(0,'x') is converting N -> Nx1
@@ -555,8 +527,7 @@ class MergeIncrementingAutoencoder(Transformer):
         layer_greedy = [ae.indexed_train_func(0, learning_rate, x, batch_size, lambda  x, j=i: chained_output(self.layers[:j], x)) for i, ae in enumerate(self._layered_autoencoders)]
         # fintune is done by optimizing cross-entropy between x and reconstructed_x
         finetune = self._autoencoder.train_func(0, learning_rate, x, y, batch_size)
-        # actual fine tuning using softmax error + reconstruction error
-        combined_objective_tune = self._combined_objective.train_func(0, learning_rate, x, y, batch_size)
+
 
         # set up cost function
         mi_cost = self._softmax.cost + self.lam * self._autoencoder.cost
@@ -719,9 +690,6 @@ class MergeIncrementingAutoencoder(Transformer):
                     for i in pool_indexes:
                         mi_train(i, empty_slots)
 
-            #for i in pool_indexes:
-            #    combined_objective_tune(i)
-
 
 
         return merge_model
@@ -763,46 +731,6 @@ class CombinedObjective(Transformer):
         comb_obj_finetune_func = self.make_func(x, y, batch_size, self.cost, update, transformed_x)
         return iterations_shim(comb_obj_finetune_func, iterations)
 
-    def train_with_early_stop_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, transformed_x=identity, iterations=None):
-        if iterations is None:
-            iterations = self.iterations
-
-        combined_cost = self._softmax.cost + self.lam * self._autoencoder.cost
-        #combined_cost = self._softmax.cost + self.lam * 0.5
-
-        theta = []
-        for layer in self.layers[:-1]:
-            theta += [layer.W, layer.b, layer.b_prime]
-        theta += [self.layers[-1].W, self.layers[-1].b] #softmax layer
-
-        updates = [(param, param - learning_rate*grad) for param, grad in zip(theta, T.grad(combined_cost,wrt=theta))]
-
-        train = self.make_func(x,y,batch_size,combined_cost,updates,transformed_x)
-        validate = self.make_func(v_x, v_y, batch_size, combined_cost, None, transformed_x)
-
-        valid_size = v_x.get_value().shape[0]/batch_size
-
-        return iterations_shim_early_stopping(train, validate, valid_size, iterations, 10)
-
-    def train_with_early_stop_func_v2(self, arc, learning_rate, x, y, v_x, v_y, batch_size, transformed_x=identity, iterations=None):
-        if iterations is None:
-            iterations = self.iterations
-
-        combined_cost = self._softmax.cost + self.lam * self._autoencoder.cost
-        #combined_cost = self._softmax.cost + self.lam * 0.5
-
-        theta = []
-        for layer in self.layers[:-1]:
-            theta += [layer.W, layer.b, layer.b_prime]
-        theta += [self.layers[-1].W, self.layers[-1].b] #softmax layer
-
-        updates = [(param, param - learning_rate*grad) for param, grad in zip(theta, T.grad(combined_cost,wrt=theta))]
-
-        train = self.make_func(x,y,batch_size,combined_cost,updates,transformed_x)
-        validate = self.make_func(v_x, v_y, batch_size, combined_cost, None, transformed_x)
-
-        return [iterations_shim(train,iterations), validate]
-
     def validate_func(self, arc, x, y, batch_size, transformed_x=identity):
         return self._softmax.validate_func(arc, x, y, batch_size, transformed_x)
 
@@ -820,7 +748,7 @@ class CombinedObjective(Transformer):
 
 class DeepReinforcementLearningModel(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size, controller,simi_thresh = 0.7):
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size, controller,simi_thresh, num_classes):
 
         super(DeepReinforcementLearningModel,self).__init__(layers, 1, True)
 
@@ -832,9 +760,9 @@ class DeepReinforcementLearningModel(Transformer):
 
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
-        self._pool = Pool(layers[0].initial_size[0], pool_size)
-        self._hard_pool = Pool(layers[0].initial_size[0], pool_size)
-        self._diff_pool = Pool(layers[0].initial_size[0], pool_size)
+        self._pool = Pool(layers[0].initial_size[0], pool_size,num_classes)
+        self._hard_pool = Pool(layers[0].initial_size[0], pool_size,num_classes)
+        self._diff_pool = Pool(layers[0].initial_size[0], pool_size,num_classes)
 
 
         self.iterations = iterations
@@ -842,7 +770,7 @@ class DeepReinforcementLearningModel(Transformer):
         self.simi_thresh = simi_thresh
         self.train_distribution = []
         self.pool_distribution = []
-
+        self.num_classes = num_classes
         self._error_log = []
         self._valid_error_log = []
         self._reconstruction_log = []
@@ -983,13 +911,13 @@ class DeepReinforcementLearningModel(Transformer):
         return norm_dist
 
     def train_func(self, arc, learning_rate, x, y, batch_size, apply_x=identity):
-        batch_pool = Pool(self.layers[0].initial_size[0], batch_size)
+        batch_pool = Pool(self.layers[0].initial_size[0], batch_size,self.num_classes)
 
         train_func = self._softmax.train_func(arc, learning_rate, x, y, batch_size, apply_x)
 
         reconstruction_func = self._autoencoder.validate_func(arc, x, y, batch_size, apply_x)
         error_func = self.error_func(arc, x, y, batch_size, apply_x)
-        #valid_error_func = self.error_func(arc,v_x,v_y, batch_size, apply_x)
+        valid_error_func = self.error_func(arc,x,y, batch_size, apply_x)
 
         merge_inc_func_batch = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, x, y)
         merge_inc_func_pool = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, self._pool.data, self._pool.data_y)
@@ -1021,6 +949,7 @@ class DeepReinforcementLearningModel(Transformer):
         def train_adaptively(batch_id):
 
             self._error_log.append(np.asscalar(error_func(batch_id)))
+            self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
 
             rec_err = reconstruction_func(batch_id)
             #print('Reconstruction Error: ',rec_err,', batch id: ', batch_id)
@@ -1034,12 +963,12 @@ class DeepReinforcementLearningModel(Transformer):
             self._hard_pool.add(*hard_examples_func(batch_id))
 
             #print('size before pool_if_diff: ',self._diff_pool.size)
-            self.pool_if_different(self._diff_pool,self.pool_distribution,batch_id,self.train_distribution[-1], batch_size, x, y)
+            #self.pool_if_different(self._diff_pool,self.pool_distribution,batch_id,self.train_distribution[-1], batch_size, x, y)
             #print('size after pool_if_diff: ',self._diff_pool.size)
 
-            print('[train_adaptively] self.pool: ',self._pool.size, ',', self._pool.position, ',', self._pool.max_size)
-            print('[train_adaptively] self.diff_pool: ',self._diff_pool.size, ',', self._diff_pool.position, ',', self._diff_pool.max_size)
-            print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
+            #print('[train_adaptively] self.pool: ',self._pool.size, ',', self._pool.position, ',', self._pool.max_size)
+            #print('[train_adaptively] self.diff_pool: ',self._diff_pool.size, ',', self._diff_pool.position, ',', self._diff_pool.max_size)
+            #print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
             data = {
                 'mea_30': moving_average(self._error_log, 30),
@@ -1075,7 +1004,7 @@ class DeepReinforcementLearningModel(Transformer):
                 'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._pool),
                 'merge_increment_hard_pool': functools.partial(merge_increment, merge_inc_func_hard_pool, self._hard_pool),
                 'pool': functools.partial(train_pool, self._pool, train_func_pool),
-                'pool_finetune':functools.partial(train_pool, self._diff_pool, train_func_diff_pool),
+                #'pool_finetune':functools.partial(train_pool, self._diff_pool, train_func_diff_pool),
                 'hard_pool': functools.partial(train_pool, self._hard_pool, train_func_hard_pool),
                 'hard_pool_clear': self._hard_pool.clear,
             }
@@ -1092,8 +1021,8 @@ class DeepReinforcementLearningModel(Transformer):
 
         return train_adaptively
 
-    def set_train_distribution(self, t_distribution):
-        self.train_distribution = t_distribution
+    def update_train_distribution(self, t_distribution):
+        self.train_distribution.append(t_distribution)
 
     def validate_func(self, arc, x, y, batch_size, transformed_x=identity):
         return self._softmax.validate_func(arc, x, y,batch_size)
@@ -1115,6 +1044,23 @@ class DeepReinforcementLearningModel(Transformer):
         for i,layer in enumerate(self.layers):
             params.append([layer.W.get_value(),layer.b.get_value(),layer.b_prime.get_value()])
         return params
+
+    def check_forward(self,arc, x, y, batch_size, transformed_x = identity):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
+
+        forward_func = theano.function([idx],sym_y,givens={
+            sym_y:y[idx * batch_size : (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1]==0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
 
 class DeepRLWithMultiLogReg(DeepReinforcementLearningModel):
 
@@ -1176,8 +1122,6 @@ class DeepRLWithMultiLogReg(DeepReinforcementLearningModel):
                 print('[train_adaptively] no secondary net gave 1, returning last net')
                 return m_i
 
-
-
         def train_secondary_adaptively(batch_id,m):
             # NOTE: we could use only the last batch. right now using all
             # call this method with previous batches if most of y values are 0s in the next batches
@@ -1211,7 +1155,7 @@ class DeepRLWithMultiLogReg(DeepReinforcementLearningModel):
 
 class MergeIncDAE(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size):
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size,num_classes):
 
         super(MergeIncDAE,self).__init__(layers, 1, True)
         self._mi_batch_size = mi_batch_size
@@ -1222,13 +1166,14 @@ class MergeIncDAE(Transformer):
 
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
-        self._pool = Pool(layers[0].initial_size[0], pool_size*3)
-        self._hard_pool = Pool(layers[0].initial_size[0], pool_size)
-        self._pre_train_pool = Pool(layers[0].initial_size[0], 12000)
+        self._pool = Pool(layers[0].initial_size[0], pool_size*3,num_classes)
+        self._hard_pool = Pool(layers[0].initial_size[0], pool_size,num_classes)
+        self._pre_train_pool = Pool(layers[0].initial_size[0], 12000,num_classes)
         self._pre_train_done = False
 
         self.iterations = iterations
         self.lam = lam
+        self.num_classes = num_classes
 
         self._error_log = []
         self._valid_error_log = []
@@ -1249,7 +1194,7 @@ class MergeIncDAE(Transformer):
         self._merge_increment.process(x, y)
 
     def train_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, apply_x=identity):
-        batch_pool = Pool(self.layers[0].initial_size[0], batch_size)
+        batch_pool = Pool(self.layers[0].initial_size[0], batch_size,self.num_classes)
 
         layer_greedy = [ ae.train_func(arc, learning_rate, self._pre_train_pool.data,  self._pre_train_pool.data_y, batch_size, lambda x, j=i: chained_output(self.layers[:j], x)) for i, ae in enumerate(self._merge_increment._layered_autoencoders) ]
         ae_finetune_func = self._autoencoder.train_func(0, learning_rate, x, y, batch_size)
