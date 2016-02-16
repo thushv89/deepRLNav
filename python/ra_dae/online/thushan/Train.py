@@ -69,13 +69,9 @@ def make_layers(in_size, hid_sizes, out_size, zero_last = False, layer_params = 
         else:
             layers.append(NNLayer.Layer(hid_sizes[i-1], hid_sizes[i], False, None, None, None))
 
-    if modelType is not 'DeepRLMultiLogreg':
-        layers.append(NNLayer.Layer(hid_sizes[-1], out_size, True, None, None, None))
-    else:
-        layers.append([NNLayer.Layer(hid_sizes[-1],2) for _ in range(out_size)])
-        print('[make_layers] layer size: ',len(layers))
-        print('[make_layers] layer 0 initial size: ',layers[0].initial_size)
-        print('[make_layers] added ',len(layers[-1]),' layers for last layer')
+
+    layers.append(NNLayer.Layer(hid_sizes[-1], out_size, True, None, None, None))
+
     print('Finished Creating Layers')
 
     return layers
@@ -103,11 +99,6 @@ def make_model(model_type,in_size, hid_sizes, out_size,batch_size, corruption_le
             layers,corruption_level,rng,lam,iterations)
     elif model_type == 'MergeInc':
         model = DLModels.MergeIncDAE(layers, corruption_level, rng, iterations, lam, batch_size, pool_size)
-    elif model_type == 'DeepRLMultiLogreg':
-        policies = [RLPolicies.ContinuousState() for _ in range(out_size)]
-        model = DLModels.DeepRLWithMultiLogReg(
-            layers, corruption_level, rng, iterations, lam, batch_size, pool_size, policies,0.7
-        )
 
     model.process(T.matrix('x'), T.matrix('y'))
 
@@ -156,15 +147,6 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
 
             check_fwd = model.check_forward(arc, data_file[0], data_file[1], batch_size)
 
-
-        elif modelType == 'DeepRLMultiLogreg':
-
-            #import scipy # use ifyou wanna check images are received correctly
-            #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
-            #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
-
-            train_adaptive,train_sec_adaptive = model.train_func(arc, learning_rate, data_file[0], data_file[1], None, None, batch_size)
-
         elif modelType == 'SAE':
             pretrain_func,finetune_func,finetune_valid_func = model.train_func(arc, learning_rate, data_file[0], data_file[1], batch_size, False, None,None)
 
@@ -191,12 +173,12 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
 
                 if not i_bumped:
 
-                    print('[train] didnt bump. yay!!!')
-                    if last_action == 0:
+                    print('[train] didnt bump. yay!!! (No training)')
+                    '''if last_action == 0:
                         print('[train] I took correct action 0')
                         y_tmp = []
                         for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([1,0,0])
+                            y_tmp.append([0.9,0.1,0])
                         train_adaptive_prev = model.train_func(
                             arc, learning_rate, prev_data_file[0],
                             theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
@@ -216,12 +198,23 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
                         print('[train] I took correct action 2')
                         y_tmp = []
                         for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0,0,1])
+                            y_tmp.append([0,0.1,0.9])
                         train_adaptive_prev = model.train_func(
                             arc, learning_rate, prev_data_file[0],
                             theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
                         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            train_adaptive_prev(p_t_batch)
+                            train_adaptive_prev(p_t_batch)'''
+                    # though we didn't bump we can't say for sure, which direction whould be best
+                    # coz we haven't observed other directions, so we give equal probability
+                    # for all directions
+                    #y_tmp = []
+                    #for i in range(prev_data_file[0].get_value().shape[0]):
+                    #    y_tmp.append([0.33,0.34,0.33])
+                    #train_adaptive_prev = model.train_func(
+                    #    arc, learning_rate, prev_data_file[0],
+                    #    theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
+                    #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                    #    train_adaptive_prev(p_t_batch)
 
                 # don't update last_action here, do it in the test
                 # we've bumped
@@ -230,11 +223,11 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
                     #p_for_batch = get_proba_func(t_batch)
                     #act_for_batch = np.argmax(p_for_batch,axis=0)
                     if last_action == 0:
-                        # train using [0,0,1]
-                        print('[train] I shouldve taken action 2')
+                        # train using [0,0.5,0.5]
+                        print('[train] I shouldve taken action 1 or 2')
                         y_tmp = []
                         for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0,0,1])
+                            y_tmp.append([0,0.5,0.5])
                         train_adaptive_prev = model.train_func(
                             arc, learning_rate, prev_data_file[0],
                             theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
@@ -246,7 +239,7 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
                         print('[train] I shouldve taken action 0 or 2')
                         y_tmp = []
                         for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0.5,0,0.5])
+                            y_tmp.append([0.5,0.0,0.5])
                         train_adaptive_prev = model.train_func(
                             arc, learning_rate, prev_data_file[0],
                             theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
@@ -255,18 +248,16 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
                         # no point in takeing actions here, coz we've bumped
 
                     else:
-                        print('[train] I shouldve taken action 0')
-                        # train_using [1,0,0]
+                        print('[train] I shouldve taken action 0 or 1')
+                        # train_using [0.5,0.5,0]
                         y_tmp = []
                         for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([1,0,0])
+                            y_tmp.append([0.5,0.5,0])
                         train_adaptive_prev = model.train_func(
                             arc, learning_rate, prev_data_file[0],
                             theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
                         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
                             train_adaptive_prev(p_t_batch)
-
-                episode += 1
 
         except StopIteration:
             pass
@@ -289,33 +280,39 @@ def persist_parameters(layers,policy):
     pickle.dump((lyr_params, init_sizes, policy.get_Q(),episode),open( "params.pkl", "wb" ))
 
 def test(shared_data_file_x,arc,model, modelType):
-    global last_action,i_bumped
-    if modelType == 'DeepRL' or 'DeepRLMultiLogreg':
+    global i_bumped
+    if modelType == 'DeepRL':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/batch_size))-1
         print('[test] Last idx: ',last_idx)
         probs = np.mean(get_proba_func(last_idx),axis=0)
         print('[test] Probs: ', probs)
-
-        action = np.argmax(probs)
-        print('[test] Action got: ', np.argmax(probs))
-        if i_bumped:
-            last_action = 1
+        if np.max(probs)>0.34:
+            action = np.argmax(probs)
         else:
-            last_action = action
-        print('[test] last action: ', last_action)
-        print "\n"
+            action = np.random.randint(0,3)
+        print('[test] Action got: ', action)
         return action
 
+fwd_threshold = 0.5
 def run(data_file,prev_data_file):
-    global episode,i_bumped
-    if data_file[1].shape[0]>0:
+    global episode,i_bumped,bump_episode,last_action,fwd_threshold
+    print('[run] episode: ',episode)
+    print('[run] bump_episode: ',bump_episode)
+
+    # this part is for the very first action after bumping somewhere
+    if data_file[1].shape[0]>0 and episode-1 == bump_episode:
+        print('[run] very first episode after bump')
+        last_action = 1
+        shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
+        action = test(shared_data_file[0],1,model,modelType)
+    elif data_file[1].shape[0]>0:
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
         print("Running Deep RL Net...")
         print("[run] Input size: ", shared_data_file[0].eval().shape)
         print("[run] Label size: ", shared_data_file[1].eval().shape)
         print("[run] Count: ", shared_data_file[2])
-        valid_file = [None,None]
+
         if prev_data_file is not None:
             prev_shared_data_file = make_shared(prev_data_file[0],prev_data_file[1],'prev_inputs',False)
         else:
@@ -327,6 +324,7 @@ def run(data_file,prev_data_file):
             train(batch_size, shared_data_file, prev_shared_data_file,
                            pre_epochs, finetune_epochs, learning_rate, model, modelType, input_avger)
             action = test(shared_data_file[0],1,model,modelType)
+
         elif shared_data_file and shared_data_file[2]>0 and episode>=train_for:
             action = test(shared_data_file[0],1,model,modelType)
 
@@ -338,21 +336,25 @@ def run(data_file,prev_data_file):
             persist_complete = True
     else:
         action=1
+
+    last_action = action
+    print('[run] last action: ', last_action)
+    print "\n"
+
+    episode += 1
     action_pub.publish(action)
 
 prev_data = None
+bump_episode = -1
 def callback_data_save_status(msg):
-    global data_inputs
-    global data_labels
-    global prev_data
-    global i_bumped
+    global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode
 
-    print('Running DeepRL ...')
+    print('[callback] Running DeepRL ...')
     input_count = data_inputs.shape[0]
     label_count = data_labels.shape[0]
-    print('callback currdata (before): ',data_inputs.shape,', ',data_labels.shape)
+    print('[callback] currdata (before): ',data_inputs.shape,', ',data_labels.shape)
     if data_inputs.shape[0] != data_labels.shape[0]:
-        print('[callback data_save] data and label counts are different. correcting')
+        print('[callback] data and label counts are different. correcting')
         if label_count >input_count:
             for _ in range(label_count-input_count):
                 data_labels = np.delete(data_labels,-1,0)
@@ -361,14 +363,21 @@ def callback_data_save_status(msg):
                 data_inputs = np.delete(data_inputs,-1,0)
 
     # for the 1st iteration
-    if prev_data is None or i_bumped:
+    if i_bumped:
+        prev_data = None
+        bump_episode = episode-1
+        i_bumped = False
+
+    if prev_data is not None:
+        print('[callback] prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape)
+
+    print('[callback] currdata (after): ',data_inputs.shape,' ,',data_labels.shape)
+
+    if data_inputs.shape[0]>0 and data_labels.shape[0]>0:
+        run([data_inputs,data_labels],prev_data)
         prev_data = [data_inputs,data_labels]
-
-    print('callback currdata (after): ',data_inputs.shape,' ,',data_labels.shape)
-    print('callback prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape)
-
-    run([data_inputs,data_labels],prev_data)
-    prev_data = [data_inputs,data_labels]
+    else:
+        print("[callback] No data to run")
 
 
 
@@ -436,7 +445,7 @@ if __name__ == '__main__':
     epochs = 1
     theano.config.floatX = 'float32'
 
-    hid_sizes = [2048]
+    hid_sizes = [2048,1024]
 
     corruption_level = 0.2
     lam = 0.1
