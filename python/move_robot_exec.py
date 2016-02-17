@@ -10,8 +10,10 @@ def callback_action_status(msg):
 def callback_obstacle_status(msg):
     print("[move_robot_executer] Hit obstacle")
     import os
-    cmd = 'rosnode kill /move_robot_executer'    
-    os.system(cmd)    
+    import time
+    time.sleep(1)
+    cmd = 'rosnode kill /move_robot_executer'
+    os.system(cmd)
     
   
 if __name__=='__main__':  
@@ -19,7 +21,10 @@ if __name__=='__main__':
     import os
     cmd = '../ros/move_robot/devel/lib/move_robot/move_robot 1'
     os.system(cmd)
-    
+
+    #cmd2 = '../ros/move_robot/devel/lib/move_robot/move_robot_cancel'
+    #os.system(cmd2)
+
     rospy.init_node("move_robot_executer")        
     rospy.Subscriber("/action_status", Int16, callback_action_status)
     rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)

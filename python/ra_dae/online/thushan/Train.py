@@ -107,6 +107,7 @@ def make_model(model_type,in_size, hid_sizes, out_size,batch_size, corruption_le
 # KEEP THIS AS 1 otherwise can lead to issues
 last_action = 1 # this is important for DeepRLMultiLogreg
 i_bumped = False
+num_bumps = 0
 def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, modelType,input_avger):
 
     start_time = time.clock()
@@ -156,15 +157,15 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
             if modelType == 'DeepRL':
 
                 from collections import Counter
-                global last_action
-                global episode
-                global i_bumped
+                global last_action,episode,i_bumped,num_bumps
+
                 i_bumped = False
                 for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
                     # if we should go forward #no training though
                     # we always train from previous batches
                     if not check_fwd(t_batch):
                         i_bumped = True
+                        num_bumps += 1
                         break
 
                 for p_t_batch in range(prev_data_file[0].get_value().shape[0]):
@@ -296,10 +297,10 @@ def test(shared_data_file_x,arc,model, modelType):
 
 fwd_threshold = 0.5
 def run(data_file,prev_data_file):
-    global episode,i_bumped,bump_episode,last_action,fwd_threshold
+    global episode,i_bumped,bump_episode,last_action,fwd_threshold,num_bumps
     print('[run] episode: ',episode)
     print('[run] bump_episode: ',bump_episode)
-
+    print('[run] number of bumps: ',num_bumps)
     # this part is for the very first action after bumping somewhere
     if data_file[1].shape[0]>0 and episode-1 == bump_episode:
         print('[run] very first episode after bump')
@@ -320,17 +321,17 @@ def run(data_file,prev_data_file):
 
         action = -1
         global train_for
-        if shared_data_file and shared_data_file[2]>0 and episode<train_for:
+        if shared_data_file and shared_data_file[2]>0 and num_bumps<train_for:
             train(batch_size, shared_data_file, prev_shared_data_file,
                            pre_epochs, finetune_epochs, learning_rate, model, modelType, input_avger)
             action = test(shared_data_file[0],1,model,modelType)
 
-        elif shared_data_file and shared_data_file[2]>0 and episode>=train_for:
+        elif shared_data_file and shared_data_file[2]>0 and num_bumps>=train_for:
             action = test(shared_data_file[0],1,model,modelType)
 
         global persist_complete
         global train_for
-        if episode >= train_for and not persist_complete:
+        if num_bumps >= train_for and not persist_complete:
             print('[run] Persist parameters')
             persist_parameters(model.layers,model._controller)
             persist_complete = True
@@ -445,7 +446,7 @@ if __name__ == '__main__':
     epochs = 1
     theano.config.floatX = 'float32'
 
-    hid_sizes = [2048,1024]
+    hid_sizes = [64]
 
     corruption_level = 0.2
     lam = 0.1

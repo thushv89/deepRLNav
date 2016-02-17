@@ -300,7 +300,8 @@ class Softmax(Transformer):
         self.theta = [param for layer in self.layers for param in [layer.W, layer.b]]
         #self._errors = T.mean(T.neq(self.results,y))
         #self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
-        self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x,y)
+        #self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x,y)
+        self.cost_vector = T.sum(T.sqrt((self.p_y_given_x-y)**2),axis=1)
         self.cost = T.mean(self.cost_vector)
 
         return None
@@ -947,7 +948,7 @@ class DeepReinforcementLearningModel(Transformer):
 
         # get early stopping
         def train_adaptively(batch_id):
-
+            from math import sqrt
             self._error_log.append(np.asscalar(error_func(batch_id)))
             self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
 
@@ -971,8 +972,8 @@ class DeepReinforcementLearningModel(Transformer):
             #print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
             data = {
-                'mea_30': moving_average(self._error_log, 30),
                 'mea_15': moving_average(self._error_log, 15),
+                'mea_10': moving_average(self._error_log, 10),
                 'mea_5': moving_average(self._error_log, 5),
                 'pool_relevant': self.pool_relevant(self._pool,self.train_distribution,batch_size),
                 'initial_size': self.layers[1].initial_size[0],
@@ -983,7 +984,7 @@ class DeepReinforcementLearningModel(Transformer):
                 'errors': self._error_log[-1],
                 'neuron_balance': self._neuron_balance_log[-1],
                 'reconstruction': self._reconstruction_log[-1],
-                'r_15': moving_average(self._reconstruction_log, 15)
+                'r_5': moving_average(self._reconstruction_log, 5)
             }
 
             def merge_increment(func, pool, amount, merge, inc):

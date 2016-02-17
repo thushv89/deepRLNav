@@ -188,5 +188,9 @@ include_directories(
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
 add_executable(move_robot src/move_robot.cpp)
+add_executable(move_robot_cancel src/move_robot_cancel.cpp)
 target_link_libraries(move_robot ${catkin_LIBRARIES})
+target_link_libraries(move_robot_cancel ${catkin_LIBRARIES})
+
+
 
