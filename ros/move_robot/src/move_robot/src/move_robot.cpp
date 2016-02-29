@@ -3,12 +3,11 @@
 #include <tf/tf.h>
 #include <tf/transform_listener.h>
 #include "std_msgs/String.h"
+#include "std_msgs/Bool.h"
 #include <sstream>
 using namespace std;
 
-
 int main(int argc, char* argv[]){
-
 
 // st is input string
     int action;
@@ -16,7 +15,7 @@ int main(int argc, char* argv[]){
     cout << "Argument is " << action << "\n";
     ros::init(argc, argv, "simple_navigation_goals");
 
-    ros::NodeHandle n;
+    ros::NodeHandle n;    
     ros::Publisher goal_pub = n.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1000);
 
     //we'll send a goal to the robot to move 1 meter forward
@@ -27,15 +26,15 @@ int main(int argc, char* argv[]){
 	tf::TransformListener listener;
 	tf::StampedTransform mytransform;
 	try{
-	  ros::Duration(0.5).sleep();
-	  listener.waitForTransform("map","base_link",ros::Time::now(),ros::Duration(3.0));
-	  listener.lookupTransform("map", "base_link",
+	    ros::Duration(0.5).sleep();
+	    listener.waitForTransform("map","base_link",ros::Time::now(),ros::Duration(3.0));
+	    listener.lookupTransform("map", "base_link",
 				  ros::Time(0), mytransform);
 	  
 	}
 	catch (tf::TransformException &ex) {
-	  ROS_ERROR("%s",ex.what());
-	  ros::Duration(1.0).sleep();
+	    ROS_ERROR("%s",ex.what());
+	    ros::Duration(1.0).sleep();
 	}
       
 	double yaw_angle = tf::getYaw(mytransform.getRotation()); //yaw will be in rad    
@@ -136,8 +135,8 @@ int main(int argc, char* argv[]){
 	}
 	
 	if(action == 3){
-	  newX = x;
-	  newY = y;
+	    newX = x;
+	    newY = y;
 	}
 	cout << "New location" << newX << "," << newY << "\n";
 	

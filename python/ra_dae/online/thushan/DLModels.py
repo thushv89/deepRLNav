@@ -532,44 +532,48 @@ class MergeIncrementingAutoencoder(Transformer):
 
         # set up cost function
         mi_cost = self._softmax.cost + self.lam * self._autoencoder.cost
-        mi_updates = []
 
-        # calculating merge_inc updates
-        # increment a subtensor by a certain value
-        for i, nnlayer in enumerate(self._autoencoder.layers):
-            # do the inc_subtensor update only for the first layer
-            # update the rest of the layers normally
-            if i == 0:
-                # removed ".T" in the T.grad operation. It seems having .T actually
-                # causes a dimension mismatch
-                mi_updates += [ (nnlayer.W, T.inc_subtensor(nnlayer.W[:,nnlayer.idx],
-                                - learning_rate * T.grad(mi_cost, nnlayer.W)[:,nnlayer.idx])) ]
-                mi_updates += [ (nnlayer.b, T.inc_subtensor(nnlayer.b[nnlayer.idx],
-                                - learning_rate * T.grad(mi_cost,nnlayer.b)[nnlayer.idx])) ]
-            else:
-                mi_updates += [(nnlayer.W, nnlayer.W - learning_rate * T.grad(mi_cost, nnlayer.W))]
-                mi_updates += [(nnlayer.b, nnlayer.b - learning_rate * T.grad(mi_cost,nnlayer.b))]
+        all_mi_train_funcs = []
+        for j in range(len(self._autoencoder.layers)):
+            mi_updates = []
 
-            mi_updates += [(nnlayer.b_prime, -learning_rate * T.grad(mi_cost,nnlayer.b_prime))]
+            # calculating merge_inc updates
+            # increment a subtensor by a certain value
+            for i, nnlayer in enumerate(self._autoencoder.layers):
+                # do the inc_subtensor update only for the first layer
+                # update the rest of the layers normally
+                if i == j:
+                    # removed ".T" in the T.grad operation. It seems having .T actually
+                    # causes a dimension mismatch
+                    mi_updates += [ (nnlayer.W, T.inc_subtensor(nnlayer.W[:,nnlayer.idx],
+                                    - learning_rate * T.grad(mi_cost, nnlayer.W)[:,nnlayer.idx])) ]
+                    mi_updates += [ (nnlayer.b, T.inc_subtensor(nnlayer.b[nnlayer.idx],
+                                    - learning_rate * T.grad(mi_cost,nnlayer.b)[nnlayer.idx])) ]
+                else:
+                    mi_updates += [(nnlayer.W, nnlayer.W - learning_rate * T.grad(mi_cost, nnlayer.W))]
+                    mi_updates += [(nnlayer.b, nnlayer.b - learning_rate * T.grad(mi_cost,nnlayer.b))]
 
-        softmax_theta = [self.layers[-1].W, self.layers[-1].b]
+                mi_updates += [(nnlayer.b_prime, -learning_rate * T.grad(mi_cost,nnlayer.b_prime))]
 
-        mi_updates += [(param, param - learning_rate * grad)
-                       for param, grad in zip(softmax_theta, T.grad(mi_cost, softmax_theta))]
+            softmax_theta = [self.layers[-1].W, self.layers[-1].b]
 
-        idx = T.iscalar('idx')
+            mi_updates += [(param, param - learning_rate * grad)
+                           for param, grad in zip(softmax_theta, T.grad(mi_cost, softmax_theta))]
 
-        given = {
-            self._x : x[idx*batch_size : (idx+1) * batch_size],
-            self._y : y[idx*batch_size : (idx+1) * batch_size]
-        }
+            idx = T.iscalar('idx')
 
-        mi_train = theano.function([idx, self.layers[0].idx], mi_cost, updates=mi_updates, givens=given)
+            given = {
+                self._x : x[idx*batch_size : (idx+1) * batch_size],
+                self._y : y[idx*batch_size : (idx+1) * batch_size]
+            }
+
+            mi_train = theano.function([idx, self.layers[j].idx], mi_cost, updates=mi_updates, givens=given)
+            all_mi_train_funcs.append(mi_train)
 
         # the merge is done only for the first hidden layer.
         # apperantly this has been tested against doing this for all layers.
         # but doing this only to the first layer has achieved the best performance
-        def merge_model(pool_indexes, merge_percentage, inc_percentage):
+        def merge_model(pool_indexes, merge_percentage, inc_percentage,layer_idx):
             '''
             Merge/Increment the batch using given pool of data
             :param pool_indexes:
@@ -578,16 +582,17 @@ class MergeIncrementingAutoencoder(Transformer):
             :return:
             '''
 
+            verbose = True
             prev_map = {}
-            prev_dimensions = self.layers[0].initial_size[0]
+            #bottom_dimensions = self.layers[layer_idx].initial_size[0]
 
             used = set()
             empty_slots = []
 
             # first layer
-            layer_weights = self.layers[0].W.get_value().T.copy()
-            layer_bias = self.layers[0].b.get_value().copy()
-
+            layer_weights = self.layers[layer_idx].W.get_value().T.copy()
+            layer_bias = self.layers[layer_idx].b.get_value().copy()
+            bottom_dimensions = layer_weights.shape[1]
             # initialization of weights
             init = 4 * np.sqrt(6.0 / (sum(layer_weights.shape)))
 
@@ -595,19 +600,31 @@ class MergeIncrementingAutoencoder(Transformer):
             merge_count = int(merge_percentage * layer_weights.shape[0])
             inc_count = int(inc_percentage * layer_weights.shape[0])
 
+            if verbose:
+                print "################## Retrieving hyper parameters (Layer ",layer_idx,")####################"
+                print "Layer weights (Transpose): ",layer_weights.shape
+                print "Layer bias: ",layer_bias.shape
+                print "Layer\'s bottom size: ",bottom_dimensions
+                print "Merge count: ",merge_count
+                print "Increment count: ",inc_count
+                print ""
+
             # if there's nothing to merge or increment
             if merge_count == 0 and inc_count == 0:
                 return
 
             # get the nodes ranked highest to lowest (merging order)
+            #print('Nodes to merge: ', score_merges(layer_weights))
+
             for index in score_merges(layer_weights):
-                # all merges have been performed
+                # all merges have been performed or mergecount is zero
                 if len(empty_slots) == merge_count:
                     break
 
                 # x and y coordinates created out of index (assume these are the two nodes
                 # to merge)
                 x_i, y_i = index % layer_weights.shape[0], index // layer_weights.shape[0]
+                #print('index: ',index,' x_i: ',x_i,' y_i: ',y_i)
 
                 # if x_i and y_i are not in "used"`  list
                 # 'used' contains merged nodes
@@ -620,20 +637,38 @@ class MergeIncrementingAutoencoder(Transformer):
                     #add it to the used list
                     used.update([x_i,y_i])
                     empty_slots.append(y_i)
+                    if verbose:
+                        print "x_i,y_i: ",x_i,y_i
+                        print "Changing weight & bias at ",x_i," with (x_i+y_i)/2"
+
+            if verbose:
+                print ""
+            #print('used: ',used)
+            #print('empty_slots: ',empty_slots)
 
             #get the new size of layer
             new_size = layer_weights.shape[0] + inc_count - len(empty_slots)
             current_size = layer_weights.shape[0]
+            if verbose:
+                print "current -> new (size): ",current_size,new_size
 
             # if new size is less than current... that is reduce operation
             if new_size < current_size:
+                # non_empty_slots represent the nodes that were merged
                 non_empty_slots = sorted(list(set(range(0,current_size)) - set(empty_slots)), reverse=True)[:len(empty_slots)]
+                #print('non empty: ',non_empty_slots)
+                # prev_map, merge_node -> deleted_node
                 prev_map = dict(zip(empty_slots, non_empty_slots))
-
+                #print('prev_map: ',prev_map)
                 for dest, src in prev_map.items():
                     layer_weights[dest] = layer_weights[src]
                     layer_weights[src] = np.asarray(self.rng.uniform(low=init, high=init, size=layer_weights.shape[1]), dtype=theano.config.floatX)
+                    if verbose:
+                        print "Replacing weight at ",dest,"(",layer_weights[dest].shape,") with ",src," (",layer_weights[src].shape,")"
 
+                if verbose:
+                    print "Layer weights (transpose) after replacement: ",layer_weights.shape
+                    print ""
                 empty_slots = []
             # increment operation
             else:
@@ -641,57 +676,68 @@ class MergeIncrementingAutoencoder(Transformer):
 
             # new_size: new layer size after increment/reduce op
             # prev_dimension: size of input layer
-            new_layer_weights = np.zeros((new_size,prev_dimensions), dtype = theano.config.floatX)
-            print('Old layer 1 size: ',layer_weights.shape[0])
-            print('New layer 1 size: ',new_layer_weights.shape[0])
+            new_layer_weights = np.zeros((new_size,bottom_dimensions), dtype = theano.config.floatX)
+            print 'Old layer ',layer_idx,' size: ',layer_weights.shape
+            print 'New layer ',layer_idx,' size: ',new_layer_weights.shape
 
             # the existing values from layer_weights copied to new layer weights
             # and it doesn't matter if layer_weights.shape[0]<new_layer_weights.shape[0] it'll assign values until it reaches the end
             new_layer_weights[:layer_weights.shape[0], :layer_weights.shape[1]] = layer_weights[:new_layer_weights.shape[0], :new_layer_weights.shape[1]]
+            if verbose:
+                print "Layer weights (after Action): ",new_layer_weights.shape
+                print "Copied all the weights from old matrix to new matrix"
+                print ""
 
             # get all empty_slots that are < new_size  +  list(prev_size->new_size)
             empty_slots = [slot for slot in empty_slots if slot < new_size] + list(range(layer_weights.shape[0],new_size))
-            new_layer_weights[empty_slots] = np.asarray(self.rng.uniform(low=-init, high=init, size=(len(empty_slots), prev_dimensions)), dtype=theano.config.floatX)
+            new_layer_weights[empty_slots] = np.asarray(self.rng.uniform(low=-init, high=init, size=(len(empty_slots), bottom_dimensions)), dtype=theano.config.floatX)
 
             # fills missing entries with zero
-            print('New layer 1 size (bias): ',layer_bias.shape[0])
+            print 'Old layer ',layer_idx,' size (bias): ',layer_bias.shape
             layer_bias.resize(new_size, refcheck=False)
-            print('New layer 1 size (bias): ',layer_bias.shape[0])
+            print 'New layer ',layer_idx,' size (bias): ',layer_bias.shape
             layer_bias_prime = self.layers[0].b_prime.get_value().copy()
-            layer_bias_prime.resize(prev_dimensions)
+            layer_bias_prime.resize(bottom_dimensions)
 
             prev_dimensions = new_layer_weights.shape[0]
 
-            self.layers[0].W.set_value(new_layer_weights.T)
-            self.layers[0].b.set_value(layer_bias)
-            self.layers[0].b_prime.set_value(layer_bias_prime)
+            self.layers[layer_idx].W.set_value(new_layer_weights.T)
+            self.layers[layer_idx].b.set_value(layer_bias)
+            self.layers[layer_idx].b_prime.set_value(layer_bias_prime)
 
             #if empty_slots:
             #    for _ in range(int(self.iterations)):
             #        for i in pool_indexes:
             #            layer_greedy[0](i, empty_slots)
 
-            last_layer_weights = self.layers[1].W.get_value().copy()
-
+            top_layer_weights = self.layers[layer_idx+1].W.get_value().copy()
+            if verbose:
+                print "Layer weights top size: ",top_layer_weights.shape
+                print "Layer weights top row size: ",prev_dimensions
             for dest, src in prev_map.items():
-                last_layer_weights[dest] = last_layer_weights[src]
-                last_layer_weights[src] = np.zeros(last_layer_weights.shape[1])
+                top_layer_weights[dest] = top_layer_weights[src]
+                top_layer_weights[src] = np.zeros(top_layer_weights.shape[1])
 
-            last_layer_weights.resize((prev_dimensions, self.layers[1].initial_size[1]),refcheck=False)
-            last_layer_prime = self.layers[1].b_prime.get_value().copy()
-            last_layer_prime.resize(prev_dimensions, refcheck=False)
+            if verbose:
+                print "Layer weights top before resize: ",top_layer_weights.shape
+            top_layer_weights.resize((prev_dimensions, self.layers[layer_idx+1].W.get_value().shape[1]),refcheck=False)
+            if verbose:
+                print "Layer weights top after resize: ",top_layer_weights.shape
+                print "####################################################"
+                print ""
 
-            self.layers[1].W.set_value(last_layer_weights)
-            self.layers[1].b_prime.set_value(last_layer_prime)
+            if layer_idx != len(self.layers)-1:
+                top_layer_prime = self.layers[layer_idx+1].b_prime.get_value().copy()
+                top_layer_prime.resize(prev_dimensions, refcheck=False)
+                self.layers[layer_idx+1].b_prime.set_value(top_layer_prime)
 
+            self.layers[layer_idx+1].W.set_value(top_layer_weights)
 
             # finetune with supervised
             if empty_slots:
                 for _ in range(self.iterations):
                     for i in pool_indexes:
-                        mi_train(i, empty_slots)
-
-
+                        all_mi_train_funcs[layer_idx](i, empty_slots)
 
         return merge_model
 
@@ -754,7 +800,7 @@ class DeepReinforcementLearningModel(Transformer):
         super(DeepReinforcementLearningModel,self).__init__(layers, 1, True)
 
         self._mi_batch_size = mi_batch_size
-        self._controller = controller
+        self._controller = [controller for _ in range(len(layers[:-1]))]
         self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
         self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations)
         self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations)
@@ -778,7 +824,7 @@ class DeepReinforcementLearningModel(Transformer):
         self._neuron_balance_log = []
         self._network_size_log = []
 
-        self.neuron_balance = 1
+        self.neuron_balance = [1 for _ in range(len(self.layers[:-1]))]
 
         self.episode = 0
 
@@ -792,8 +838,8 @@ class DeepReinforcementLearningModel(Transformer):
 
     def pool_if_different(self, pool, pool_dist, batch_id, current, batch_size,x, y):
 
-        print('Pool if different ...')
-        print('pool_if_different: pool size: ',pool.size)
+        print 'Pool if different ...'
+        print 'pool_if_different: pool size: ',pool.size
         def magnitude(x):
             '''  returns sqrt(sum(v(i)^2)) '''
             return sum((v **2 for v in x.values())) ** 0.5
@@ -821,7 +867,7 @@ class DeepReinforcementLearningModel(Transformer):
         # for i in range(-1,-1 - batches_covered) gets the indexes as minus indices as it is easier way to count from back of array
         for k,v in current.items():
             current[k]=v*batch_size
-        print('current dist: ', current)
+        print 'current dist: ', current
 
         if len(pool_dist)>0:
 
@@ -856,7 +902,7 @@ class DeepReinforcementLearningModel(Transformer):
                 pool.add_from_shared(batch_id,batch_size,x,y)'''
 
         else:
-            print('pool is empty. added to pool', batch_id)
+            print 'pool is empty. added to pool', batch_id
             pool_dist.append(current)
             pool.add_from_shared(batch_id, batch_size, x, y)
 
@@ -949,8 +995,17 @@ class DeepReinforcementLearningModel(Transformer):
         # get early stopping
         def train_adaptively(batch_id):
             from math import sqrt
+            print "[train_adaptively] Info all layers"
+            for l_i,layer in enumerate(self.layers):
+                print 'W: ',l_i,': ',layer.W.get_value().shape
+                print 'b: ',l_i,': ',layer.b.get_value().shape
+                print 'b_prime: ',l_i,': ',layer.b_prime.get_value().shape
+
+
             self._error_log.append(np.asscalar(error_func(batch_id)))
+
             self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
+            err_for_layers = [self._valid_error_log[-1]]
 
             rec_err = reconstruction_func(batch_id)
             #print('Reconstruction Error: ',rec_err,', batch id: ', batch_id)
@@ -958,7 +1013,6 @@ class DeepReinforcementLearningModel(Transformer):
             self._neuron_balance_log.append(self.neuron_balance)
 
             batch_pool.add_from_shared(batch_id, batch_size, x, y)
-            print('xshape', x.get_value().shape[0],' y shape',y.eval().shape[0])
 
             self._pool.add_from_shared(batch_id, batch_size, x, y)
             self._hard_pool.add(*hard_examples_func(batch_id))
@@ -972,33 +1026,34 @@ class DeepReinforcementLearningModel(Transformer):
             #print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
             data = {
-                'mea_15': moving_average(self._error_log, 15),
-                'mea_10': moving_average(self._error_log, 10),
-                'mea_5': moving_average(self._error_log, 5),
+                'mea_15': moving_average(self._error_log, 5),
+                'mea_10': moving_average(self._error_log, 2),
+                'mea_5': moving_average(self._error_log, 3),
                 'pool_relevant': self.pool_relevant(self._pool,self.train_distribution,batch_size),
-                'initial_size': self.layers[1].initial_size[0],
+                'initial_size': [l.initial_size[1] for l in self.layers[:-1]],
                 'input_size':self.layers[0].initial_size[0],
                 'hard_pool_full': self._hard_pool.size == self._hard_pool.max_size,
                 'error_log': self._error_log,
                 'valid_error_log': self._valid_error_log,
-                'errors': self._error_log[-1],
+                'curr_error': err_for_layers[-1],
                 'neuron_balance': self._neuron_balance_log[-1],
                 'reconstruction': self._reconstruction_log[-1],
                 'r_5': moving_average(self._reconstruction_log, 5)
             }
 
-            def merge_increment(func, pool, amount, merge, inc):
+            def merge_increment(func, pool, amount, merge, inc,layer_idx):
 
                 #nonlocal neuron_balance
                 change = 1 + inc - merge #+ 0.05 * ((self.layers[1].W.get_value().shape[0]/self.layers[1].initial_size[0])-2.)
 
 
-                print('neuron balance', self.neuron_balance, '=>', self.neuron_balance * change)
-                self.neuron_balance *= change
+                print 'neuron balance (', layer_idx,')', self.neuron_balance[layer_idx], \
+                    '=>', self.neuron_balance[layer_idx] * change
+                self.neuron_balance[layer_idx] *= change
 
                 # pool.as_size(int(pool.size * amount), self._mi_batch_size) seems to provide indexes
 
-                func(pool.as_size(int(pool.size * amount), self._mi_batch_size), merge, inc)
+                func(pool.as_size(int(pool.size * amount), self._mi_batch_size), merge, inc, layer_idx)
 
             funcs = {
                 'merge_increment_batch' : functools.partial(merge_increment, merge_inc_func_batch, batch_pool),
@@ -1012,9 +1067,16 @@ class DeepReinforcementLearningModel(Transformer):
 
             #this is where reinforcement learning comes to play
             print('[train_adaptively] batch id',batch_id,' episode: ',self.episode)
-            self._controller.move(self.episode, data, funcs)
 
+            for ctrl_i in range(len(self._controller)):
 
+                self._controller[ctrl_i].move(self.episode, data, funcs,ctrl_i)
+                err_for_layers.append(np.asscalar(error_func(batch_id)))
+                data['curr_error'] = err_for_layers[-1]
+
+            print "[train_adaptively] Errors for layers: ", err_for_layers
+            print "[train_adaptively] Neuron balance: ", self.neuron_balance
+            print ""
             train_func(batch_id)
 
             self._network_size_log.append(self.layers[0].W.get_value().shape[1])

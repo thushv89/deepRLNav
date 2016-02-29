@@ -339,7 +339,7 @@ def run(data_file,prev_data_file):
         action=1
 
     last_action = action
-    print('[run] last action: ', last_action)
+    print '[run] last action: ', last_action
     print "\n"
 
     episode += 1
@@ -350,12 +350,12 @@ bump_episode = -1
 def callback_data_save_status(msg):
     global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode
 
-    print('[callback] Running DeepRL ...')
+    print '[callback] Running DeepRL ...'
     input_count = data_inputs.shape[0]
     label_count = data_labels.shape[0]
-    print('[callback] currdata (before): ',data_inputs.shape,', ',data_labels.shape)
+    print '[callback] currdata (before): ',data_inputs.shape,', ',data_labels.shape
     if data_inputs.shape[0] != data_labels.shape[0]:
-        print('[callback] data and label counts are different. correcting')
+        print '[callback] data and label counts are different. correcting'
         if label_count >input_count:
             for _ in range(label_count-input_count):
                 data_labels = np.delete(data_labels,-1,0)
@@ -370,15 +370,15 @@ def callback_data_save_status(msg):
         i_bumped = False
 
     if prev_data is not None:
-        print('[callback] prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape)
+        print '[callback] prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape
 
-    print('[callback] currdata (after): ',data_inputs.shape,' ,',data_labels.shape)
+    print '[callback] currdata (after): ',data_inputs.shape,' ,',data_labels.shape
 
     if data_inputs.shape[0]>0 and data_labels.shape[0]>0:
         run([data_inputs,data_labels],prev_data)
         prev_data = [data_inputs,data_labels]
     else:
-        print("[callback] No data to run")
+        print "[callback] No data to run"
 
 
 
@@ -389,13 +389,13 @@ def callback_data_inputs(msg):
     data_inputs = data_inputs
     #import scipy # use if you wanna check algo receive images correctly
     #scipy.misc.imsave('rec_img'+str(episode)+'.jpg', data_inputs[-1].reshape(64,-1)*255)
-    print('Recieved. Input size: ',data_inputs.shape)
+    print 'Recieved. Input size: ',data_inputs.shape
 
 def callback_data_labels(msg):
     global data_labels
     global out_size
     data_labels = np.asarray(msg.data,dtype=np.int32).reshape((-1,))
-    print('Recieved. Label size: ',data_labels.shape)
+    print 'Recieved. Label size: ',data_labels.shape
 
 data_inputs = None
 data_labels = None
@@ -421,7 +421,7 @@ if __name__ == '__main__':
     try:
         opts,args = getopt.getopt(sys.argv[1:],"",["restore_last=","train_for="])
     except getopt.GetoptError:
-        print('<filename>.py --restore_last=<1 or 0> --train_for=<int>')
+        print '<filename>.py --restore_last=<1 or 0> --train_for=<int>'
         sys.exit(2)
 
     #when I run in command line
@@ -446,7 +446,7 @@ if __name__ == '__main__':
     epochs = 1
     theano.config.floatX = 'float32'
 
-    hid_sizes = [64]
+    hid_sizes = [32,24]
 
     corruption_level = 0.2
     lam = 0.1
@@ -485,7 +485,7 @@ if __name__ == '__main__':
     model_info += 'Lambda Regularizing Coefficient: ' + str(lam) + '\n'
     model_info += 'Pool Size (Train): ' + str(pool_size) + '\n'
 
-    print(model_info)
+    print model_info
 
     rospy.init_node("deep_rl_node")
     action_pub = rospy.Publisher('action_status', Int16, queue_size=10)
