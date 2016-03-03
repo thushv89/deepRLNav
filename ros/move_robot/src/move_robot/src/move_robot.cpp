@@ -94,7 +94,7 @@ int main(int argc, char* argv[]){
 	// A
 	// |
 	// |    
-	else if((yaw_angle>=1.571+(1.571/2) && yaw_angle<=3.14) || (yaw_angle<=-1.571-(1.571/2) && yaw_angle>=-3.14) ){
+	else if((yaw_angle>=1.571+(1.571/2) && yaw_angle<=3.142) || (yaw_angle<=-1.571-(1.571/2) && yaw_angle>=-3.142) ){
 	    cout << "I am facing up\n";
 	    if(action ==0){
 		newX = x-stepSize2;

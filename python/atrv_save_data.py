@@ -9,7 +9,7 @@ from sensor_msgs.msg import Image
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool,Int16
 from rospy_tutorials.msg import Floats
 import numpy as np
 from PIL import Image as img
@@ -35,7 +35,7 @@ def callback_cam(msg):
 	    
             mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
             img_mat = img.fromarray(mat)
-            img_mat.thumbnail((64,64))
+            img_mat.thumbnail((72,72))
             img_mat_data = img_mat.getdata()
             # use if you wann check images data coming have correct data (images)
             #sm.imsave('img'+str(1)+'.jpg', np.asarray(num_data,dtype='uint8').reshape(256,-1))
@@ -116,6 +116,8 @@ def callback_laser(msg):
         if np.min(rangesNum[45:75])<0.3:
             import time
             import os
+            for l in range(len(currLabels)):
+                currLabels[l] = 0
             save_data()
             time.sleep(0.1)
             obstacle_status_pub.publish(True)
@@ -166,32 +168,35 @@ def callback_path_finish(msg):
 def save_data():
     import time    
     
-    global currInputs
-    global currLabels
-    global data_status_pub
-    global sent_input_pub
-    global sent_label_pub    
+    global currInputs,currLabels,initial_data
+    global data_status_pub,sent_input_pub,sent_label_pub
+
     #print("Input size: ",np.asarray(currInputs,dtype=np.float32).shape)
     #print("Label size: ",np.asarray(currLabels,dtype=np.float32).shape)
     sent_input_pub.publish(np.asarray(currInputs,dtype=np.float32).reshape((-1,1)))
     sent_label_pub.publish(np.asarray(currLabels,dtype=np.float32).reshape((-1,1)))
     time.sleep(0.1)
-    data_status_pub.publish(True)
+    if initial_data:
+        data_status_pub.publish(0)
+    else:
+        data_status_pub.publish(1)
     currInputs=[]
     currLabels=[]
+    initial_data = False
 
 isMoving = False
 prevPose = None
 data_status_pub = None
 obstacle_status_pub = None
 obstacle_msg_sent = False
+initial_data = True
 if __name__=='__main__':      
     currInputs = []
     currLabels = []
 
     rospy.init_node("save_data_node")
     #rate = rospy.Rate(1)
-    data_status_pub = rospy.Publisher('data_sent_status', Bool, queue_size=10)
+    data_status_pub = rospy.Publisher('data_sent_status', Int16, queue_size=10)
     sent_input_pub = rospy.Publisher('data_inputs', numpy_msg(Floats), queue_size=10)
     sent_label_pub = rospy.Publisher('data_labels', numpy_msg(Floats), queue_size=10)
     obstacle_status_pub = rospy.Publisher('obstacle_status',Bool, queue_size=10)

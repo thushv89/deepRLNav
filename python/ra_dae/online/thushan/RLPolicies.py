@@ -42,22 +42,24 @@ class ContinuousState(Controller):
             self.q = q_vals
 
         self.time_limit = time_limit
+        self.undesired_state = False
 
     def move(self, i, data, funcs,layer_idx):
 
         verbose = True
-
-        q_calc_thresh = 5
-        even_chose_thresh = 10
+        pooling = True
+        q_calc_thresh = 15
+        even_chose_thresh = 45
         balance_thresh = 25
         err_t = data['curr_error']
         err_t_minus_1 = np.mean(data['valid_error_log'][-6:-1])
 
-        print "######################### RL for Layer",layer_idx,' ################################'
+        print "################## RL for Layer: ",layer_idx,' Episode: ',i,' ##################'
 
         #if we haven't completed 30 iterations, keep pooling
         if i <=q_calc_thresh:
-            funcs['pool'](1)
+            if pooling:
+                funcs['pool'](1)
             return
 
         #what does this method do?
@@ -101,7 +103,11 @@ class ContinuousState(Controller):
             #reward = - data['error_log'][-1]
 
             #reward = (1 - err_diff)*(-curr_err)
-            reward = -curr_err
+            if self.undesired_state:
+                reward = -10
+            else:
+                reward = -curr_err
+
             neuron_penalty = 0
 
             if data['neuron_balance'][layer_idx] > balance_thresh or data['neuron_balance'][layer_idx] < 1:
@@ -144,21 +150,38 @@ class ContinuousState(Controller):
             for a, gp in gps.items():
                 print(a, np.asscalar(gp.predict(state)[0]))
 
+        self.undesired_state = False
         #to_move = (data['initial_size'] * 0.1) / (data['initial_size'] * data['neuron_balance'])
         #to_move = 0.25 * np.exp(-(data['neuron_balance']-1.)**2/2.) * (1. + err_diff) * (1. + curr_err)
         # newer to_move eqn
 
-        to_move = (50.0/data['initial_size'][layer_idx])*np.exp(-(data['neuron_balance'][layer_idx]-1.)**2/balance_thresh) * np.abs(err_diff)
+        #to_move = (50.0/data['initial_size'][layer_idx])*np.exp(-(data['neuron_balance'][layer_idx]-(.5*balance_thresh))**2/balance_thresh) * np.abs(err_diff)
+
+        # skewed normal distribution
+        #mu,sigma,alpha_skew = 1.0,5.0,4.0
+        #nb = (data['neuron_balance'][layer_idx] - mu)/sigma**2
+        #nb_alpha = alpha_skew*nb/2**0.5
+        #to_move = (50.0/data['initial_size'][layer_idx]) * (1/(2*np.pi)**0.5) * np.exp(-nb**2/2.0) *\
+        #          (1 + np.sign(nb_alpha) * np.sqrt(1-np.exp(-nb_alpha**2*((4/np.pi)+0.14*nb_alpha**2)/(1+0.14*nb_alpha**2)))) * \
+        #          (1+np.abs(err_diff))
+        to_move = (100.0/data['initial_size'][layer_idx]) * np.abs(err_diff)
         print '[move] To move: ', to_move
 
         if to_move<0.1/data['initial_size'][layer_idx]:
             print 'To move is too small'
-            funcs['pool'](1)
-            action = Action.pool
-            
-        else:
-            if action == Action.pool:
+            if pooling:
                 funcs['pool'](1)
+                action = Action.pool
+
+        else:
+            if data['neuron_balance'][layer_idx] < 10.0/data['initial_size'][layer_idx] and action == Action.reduce:
+                print('Undesired State. Neuron count too low (',data['neuron_balance'][layer_idx],'). Executing pool op')
+                funcs['pool'](1)
+                self.undesired_state = True
+
+
+            elif pooling and action == Action.pool:
+                funcs['pool_finetune'](1)
             elif action == Action.reduce:
                 # method signature: amount, to_merge, to_inc
                 # introducing division by two to reduce the impact

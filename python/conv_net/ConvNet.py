@@ -192,28 +192,58 @@ def run(data_file):
 
     action_pub.publish(action)
 
-
+prev_data = None
+bump_episode = -1
 def callback_data_save_status(msg):
-    global data_inputs
-    global data_labels
+    global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode
 
-    print('Data received')
-    run([data_inputs,data_labels])
+    print '[callback] Running DeepRL ...'
+    input_count = data_inputs.shape[0]
+    label_count = data_labels.shape[0]
+    print '[callback] currdata (before): ',data_inputs.shape,', ',data_labels.shape
+    if data_inputs.shape[0] != data_labels.shape[0]:
+        print '[callback] data and label counts are different. correcting'
+        if label_count >input_count:
+            for _ in range(label_count-input_count):
+                data_labels = np.delete(data_labels,-1,0)
+        if label_count < input_count:
+            for _ in range(input_count-label_count):
+                data_inputs = np.delete(data_inputs,-1,0)
+
+    # for the 1st iteration
+    if i_bumped:
+        prev_data = None
+        bump_episode = episode-1
+        i_bumped = False
+
+    if prev_data is not None:
+        print '[callback] prevdata: ',prev_data[0].shape,' ,',prev_data[1].shape
+
+    print '[callback] currdata (after): ',data_inputs.shape,' ,',data_labels.shape
+
+    if data_inputs.shape[0]>0 and data_labels.shape[0]>0:
+        run([data_inputs,data_labels],prev_data)
+        prev_data = [data_inputs,data_labels]
+    else:
+        print "[callback] No data to run"
+
+
 
 def callback_data_inputs(msg):
-    print('Inputs received')
     global data_inputs
-    global img_w,img_h
-    data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((img_w*img_h*3,-1))/255.
-    data_inputs = data_inputs.T
-    print('Input size: ',data_inputs.shape)
+    global in_size
+    data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((-1,in_size))/255.
+    data_inputs = data_inputs
+    #import scipy # use if you wanna check algo receive images correctly
+    #scipy.misc.imsave('rec_img'+str(episode)+'.jpg', data_inputs[-1].reshape(64,-1)*255)
+    print 'Recieved. Input size: ',data_inputs.shape
 
 def callback_data_labels(msg):
-    print('Labels received')
     global data_labels
     global out_size
     data_labels = np.asarray(msg.data,dtype=np.int32).reshape((-1,))
-    print('Label size: ',data_labels.shape)
+    print 'Recieved. Label size: ',data_labels.shape
+
 
 if __name__ == '__main__':
     theano.config.floatX = 'float32'
