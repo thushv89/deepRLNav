@@ -414,6 +414,12 @@ class Pool(object):
         self.size = min(self.size + x.shape[0], self.max_size)
         self.position = (self.position + x.shape[0]) % self.max_size
 
+    def restore_pool(self,batch_size,x,y):
+        self.add_from_shared(0,batch_size,x,y)
+
+    def get_np_data(self):
+        return self.data.get_value(),self.data_y.get_value()
+
 class StackedAutoencoderWithSoftmax(Transformer):
 
     __slots__ = ['_autoencoder', '_layered_autoencoders', '_combined_objective', '_softmax', 'lam', '_updates', '_givens', 'rng', 'iterations', '_error_log','_reconstruction_log','_valid_error_log']
@@ -800,7 +806,7 @@ class DeepReinforcementLearningModel(Transformer):
         super(DeepReinforcementLearningModel,self).__init__(layers, 1, True)
 
         self._mi_batch_size = mi_batch_size
-        self._controller = [controller for _ in range(len(layers[:-1]))]
+        self._controller = controller
         self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
         self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations)
         self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations)
@@ -810,7 +816,6 @@ class DeepReinforcementLearningModel(Transformer):
         self._pool = Pool(layers[0].initial_size[0], r_pool_size,num_classes)
         self._hard_pool = Pool(layers[0].initial_size[0], r_pool_size,num_classes)
         self._diff_pool = Pool(layers[0].initial_size[0], ft_pool_size,num_classes)
-
 
         self.iterations = iterations
         self.lam = lam
@@ -829,6 +834,19 @@ class DeepReinforcementLearningModel(Transformer):
         self.episode = 0
         self.mean_batch_pool = []
         self.pool_with_not_bump = pool_with_not_bump
+
+    def set_episode_count(self,val):
+        self.episode = val
+
+    def restore_pool(self,batch_size,x,y,dx,dy):
+        self._pool.restore_pool(batch_size,x,y)
+        self._diff_pool.restore_pool(batch_size,dx,dy)
+
+    def get_updated_hid_sizes(self):
+        new_hid_sizes = []
+        for l in self.layers[:-1]:
+            new_hid_sizes.append(l.W.get_value().shape[1])
+        return new_hid_sizes
 
     def process(self, x, y):
         self._x = x
@@ -1098,6 +1116,26 @@ class DeepReinforcementLearningModel(Transformer):
             self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
 
         return train_adaptively,update_pool
+
+    def visualize_nodes(self,learning_rate,layer_idx):
+        in_size = self.layers[0].W.get_value().shape[0]
+        width = int(in_size**0.5)
+        idx = T.iscalar('idx')
+        max_inputs = []
+        for n in range(self.layers[layer_idx].W.get_value().shape[1]):
+            n_max_input = theano.shared(np.random.rand(in_size),'max_input')
+            h_out = -chained_output(self.layers[:layer_idx+1],n_max_input)[idx]
+            theta = [n_max_input]
+            updates = [(param, param - learning_rate * grad) for param,grad in zip(theta,T.grad(h_out,wrt=theta))]
+            max_in_function = theano.function(inputs=[idx],outputs=[],updates=updates)
+            max_in_function(n)
+            max_inputs.append(n_max_input.get_value().reshape(width,width))
+
+        return max_inputs
+
+
+    def get_pool_data(self):
+        return self._pool.get_np_data(),self._diff_pool.get_np_data()
 
     def update_train_distribution(self, t_distribution):
         self.train_distribution.append(t_distribution)
