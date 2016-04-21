@@ -40,15 +40,14 @@ int main(int argc, char* argv[]){
 	double yaw_angle = tf::getYaw(mytransform.getRotation()); //yaw will be in rad    
 	double x = double(mytransform.getOrigin().getX());
 	double y = double(mytransform.getOrigin().getY());
-
+    tf::Quaternion newQuat;
 	cout << "Current location" << x << "," << y << "\n";
 	cout << "Current Yaw: " << yaw_angle << "\n";
 	double newX = 0;
 	double newY = 0;
-	double newZO = 0;
-	double newWO = 0;
+	double newYaw = 0;	
 	int stepSize = 2;
-	int stepSize2 = 1;
+	int stepSize2 = 1.5;
 	// |
 	// |
 	// V
@@ -57,18 +56,15 @@ int main(int argc, char* argv[]){
 	    if(action ==0){
 		newX = x+stepSize2;
 		newY = y+stepSize;
-		newZO=0.7;
-		newWO=0.7;
+		newYaw = 1.571;
 	    }else if(action ==1){
 		newX = x+stepSize;
 		newY = y;
-		newZO=0;
-		newWO=1;
+		newYaw =0;
 	    }else if(action == 2){
 		newX = x+stepSize2;
 		newY = y-stepSize;
-		newZO=-0.7;
-		newWO=0.7;
+		newYaw =-1.571;
 	    }
 	}
 	// ---------->
@@ -77,18 +73,15 @@ int main(int argc, char* argv[]){
 	    if(action ==0){
 		newX = x-stepSize;
 		newY = y+stepSize2;
-		newZO=1;
-		newWO=0;
+		newYaw=-3.142;
 	    }else if(action ==1){
 		newX = x;
 		newY = y+stepSize;
-		newZO=0.7;
-		newWO=0.7;
+		newYaw=1.571;
 	    }else if(action == 2){
 		newX = x+stepSize;
 		newY = y+stepSize2;
-		newZO=0;
-		newWO=1;
+		newYaw = 0;
 	    }      
 	}
 	// A
@@ -99,18 +92,15 @@ int main(int argc, char* argv[]){
 	    if(action ==0){
 		newX = x-stepSize2;
 		newY = y-stepSize;
-		newZO=-0.7;
-		newWO=0.7;
+		newYaw=-1.571;
 	    }else if(action ==1){
 		newX = x-stepSize;
 		newY = y;
-		newZO=1;
-		newWO=0;
+		newYaw=-3.142;
 	    }else if(action == 2){
 		newX = x-stepSize2;
 		newY = y+stepSize;
-		newZO=0.7;
-		newWO=0.7;
+		newYaw=1.571;
 	    }
 	}
 	// <---------
@@ -119,18 +109,15 @@ int main(int argc, char* argv[]){
 	  if(action ==0){
 	      newX = x+stepSize;
 	      newY = y-stepSize2;
-	      newZO=0;
-	      newWO=1;
+	      newYaw=0;
 	  }else if(action ==1){
 	      newX = x;
 	      newY = y-stepSize;
-	      newZO=-0.7;
-	      newWO=0.7;
+	      newYaw=-1.571;
 	  }else if(action == 2){
 	      newX = x-stepSize;
 	      newY = y-stepSize2;
-	      newZO=1;
-	      newWO=0;
+	      newYaw=-3.142;
 	  }  
 	}
 	
@@ -139,18 +126,16 @@ int main(int argc, char* argv[]){
 	    newY = y;
 	}
 	cout << "New location" << newX << "," << newY << "\n";
-	
+	cout << "New rotation" << newYaw;
+    
 	geometry_msgs::PoseStamped goal;
 	goal.header.frame_id = "map";
-	goal.header.stamp = ros::Time::now();
-	
+	goal.header.stamp = ros::Time::now();    
+    
 	goal.pose.position.x = newX;
 	goal.pose.position.y = newY;
-	goal.pose.orientation.x = 0;
-	goal.pose.orientation.y = 0;
-	goal.pose.orientation.z = newZO;
-	goal.pose.orientation.w = newWO;
-
+	goal.pose.orientation = tf::createQuaternionMsgFromYaw(newYaw);
+	
 	goal_pub.publish(goal);
 	
 	ros::spinOnce();

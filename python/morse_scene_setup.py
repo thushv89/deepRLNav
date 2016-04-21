@@ -15,9 +15,14 @@ odometry.add_interface('ros', topic="/odom",frame_id="odom", child_frame_id="bas
 keyboard = Keyboard()
 atrv.append(keyboard)
 
+frequency = 3
 camera = VideoCamera()
-camera.translate(z= 0.6)
-camera.frequency(2)
+#camera.translate(x = -1.5, z= 0.9)
+camera.translate(x = 0.7, z= 0.5)
+camera.rotate(y = -0.0)
+#camera.properties(cam_width=256,cam_height=192,cam_far=500,cam_near=2.15)
+camera.properties(cam_width=256,cam_height=192,cam_focal=10.,cam_near=0.1,cam_far=500)
+camera.frequency(frequency)
 atrv.append(camera)
 camera.add_interface('ros',topic='/camera')
 
@@ -39,7 +44,7 @@ obs_laser.properties(Visible_arc = True)
 obs_laser.properties(resolution = 1.0)
 obs_laser.properties(scan_window = 120)
 obs_laser.properties(laser_range = 4.0)
-obs_laser.frequency(2)
+obs_laser.frequency(frequency)
 atrv.append(obs_laser)
 obs_laser.add_interface('ros', topic='/obs_scan')
 
@@ -50,4 +55,3 @@ motion.add_interface('ros', topic='/cmd_vel')
 # Set the environment
 env = Environment('indoors-1/indoor-1')
 #env = Environment('laas/grande_salle')
-#env = Environment('outdoors')

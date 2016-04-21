@@ -5,9 +5,12 @@ import math
 import theano
 import theano.tensor as T
 
+def relu(x):
+    return T.switch(x > 0, x, 0*x)
+
 class Layer(object):
 
-    __slots__ = ['name', 'W', 'b', 'b_prime', 'idx', 'initial_size']
+    __slots__ = ['name', 'W', 'b', 'b_prime', 'idx', 'initial_size','activation']
 
     def __init__(self, input_size, output_size, zero=None, W=None, b=None, b_prime=None, init_sizes = None):
         self.name = '(%d*->%d*)' %(input_size,output_size) # %d represent input_size
@@ -28,10 +31,49 @@ class Layer(object):
         self.b = theano.shared(b if b != None else np.zeros(output_size, dtype=theano.config.floatX), 'b_' + self.name)
         self.b_prime = theano.shared(b_prime if b_prime != None else np.zeros(input_size, dtype=theano.config.floatX), 'b\'_' + self.name)
         self.initial_size = (input_size, output_size) if init_sizes is None else init_sizes
+        self.activation = None
 
-    def output(self, x):
+    def set_research_params(self,**params):
+        if 'activation' in params:
+            self.activation = params['activation']
+
+    def output(self, x,activation=None,dropout=0,training=True):
         ''' Return the output of this layer as a MLP '''
-        return T.nnet.sigmoid(T.dot(x, self.W) + self.b)
+        if activation is not None:
+            if activation == 'sigmoid':
+                if dropout>0 and not training:
+                    return T.nnet.sigmoid(T.dot(x, self.W/dropout) + self.b)
+                return T.nnet.sigmoid(T.dot(x, self.W) + self.b)
+            elif activation == 'relu':
+                if dropout>0 and not training:
+                    return relu(T.dot(x, self.W/dropout) + self.b)
+                else:
+                    return relu(T.dot(x, self.W) + self.b)
+            elif activation == 'softplus':
+                if dropout>0 and not training:
+                    return T.log(1+T.exp(T.dot(x,self.W/dropout)+self.b))
+                else:
+                    return T.log(1+T.exp(T.dot(x,self.W)+self.b))
+            else:
+                raise NotImplementedError
+
+        if self.activation == 'sigmoid':
+            if dropout>0 and not training:
+                return T.nnet.sigmoid(T.dot(x, self.W/dropout) + self.b)
+            else:
+                return T.nnet.sigmoid(T.dot(x, self.W) + self.b)
+        elif self.activation == 'relu':
+            if dropout>0 and not training:
+                return relu(T.dot(x, self.W/dropout) + self.b)
+            else:
+                return relu(T.dot(x, self.W) + self.b)
+        elif self.activation == 'softplus':
+            if dropout>0 and not training:
+                return T.log(1+T.exp(T.dot(x, self.W/dropout) + self.b))
+            else:
+                return T.log(1+T.exp(T.dot(x, self.W) + self.b))
+        else:
+            raise NotImplementedError
 
     def get_params(self):
         return self.W,self.b,self.b_prime

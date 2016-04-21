@@ -8,11 +8,21 @@ import numpy as np
 import logging
 import os
 from math import ceil
+import sys
+import logging
+import random
+
+logging_level = logging.INFO
+logging_format = '[%(name)s] [%(funcName)s] %(message)s'
+
 
 def identity(x):
     return x
 
-def chained_output(layers, x):
+def relu(x):
+    return T.switch(x > 0, x, 0*x)
+
+def chained_output(layers, x,activation=None,dropout=0,training=True):
     '''
     This method is applying the given transformation (lambda expression) recursively
     to a sequence starting with an initial value (i.e. x)
@@ -20,7 +30,7 @@ def chained_output(layers, x):
     :param x: Initial value to start recursion
     :return: the final value (output after input passing through multiple neural layers)
     '''
-    return functools.reduce(lambda acc, layer: layer.output(acc), layers, x)
+    return functools.reduce(lambda acc, layer: layer.output(acc,activation,dropout,training), layers, x)
 
 def iterations_shim(train, iterations):
     ''' Repeat calls to this function '''
@@ -31,75 +41,31 @@ def iterations_shim(train, iterations):
 
     return func
 
-def iterations_shim_early_stopping(train, validate, valid_size, iterations,frequency, validation_type='n_rand_for_train',n=10):
-
-    def func(i):
-        #we want to minimize best_valid_loss, so we shoudl start with largest
-        best_valid_loss = np.inf
-        patience = 0.5 * iterations # look at this many examples
-        patience_increase = 1.5
-        improvement_threshold = 0.995
-
-        if validation_type == 'full':
-            v_batch_idx = np.arange(0,valid_size)
-
-        if validation_type == 'n_rand_for_train':
-            v_batch_idx = np.random.uniform(low = 0, high = valid_size-1, size=n)
-            print('random batches: ', list(v_batch_idx))
-
-        for iter in range(iterations):
-            print('early_stopping iteration ', str(iter))
-
-            # the number of minibatches to go through before checking validation set
-            validation_freq = min(frequency,int(patience/2))
-
-            t_result = train(i)
-
-            # this is an operation done in cycles. 1 cycle is iter+1/validation_freq
-            # doing this every epoch
-            if iter % validation_freq == 0:
-                print('validating')
-                if validation_type == 'n_rand_for_validation':
-                    v_batch_idx = np.random.uniform(low = 0, high = valid_size-1, size=n)
-                    print('random batches: ', list(v_batch_idx))
-
-                v_results = []
-                for v_i in v_batch_idx:
-                    v_results.append(validate(int(v_i)))
-                curr_valid_loss = np.min(v_results)
-                print('curr valid loss: ', curr_valid_loss, ' best_valid_loss: ', best_valid_loss)
-
-                if curr_valid_loss < best_valid_loss:
-
-                    if (curr_valid_loss < best_valid_loss * improvement_threshold):
-                        prev_patience = patience
-                        patience = max(patience, iter * patience_increase)
-                        print('patience improve: ', prev_patience, ' -> ', patience)
-                    best_valid_loss = curr_valid_loss
-
-            # patience is here to check the maximum number of iterations it should check
-            # before terminating
-            if patience <= iter:
-                print('early stopping on iter: ', iter, ' (<', patience, ')')
-                break
-
-        return [t_result,best_valid_loss]
-
-    return func
-
 class Transformer(object):
 
     #__slots__ save memory by allocating memory only to the varibles defined in the list
-    __slots__ = ['layers','arcs', '_x','_y','_logger','use_error']
+    __slots__ = ['layers','arcs', '_x','_y','_logger','use_error','activation']
 
-    def __init__(self,layers, arcs, use_error):
+    def __init__(self,layers, arcs, activation, logger):
         self.layers = layers
         self._x = None
         self._y = None
-        self._logger = None
+        self._logger = logger
         self.arcs = arcs
-        self.use_error = use_error
 
+        self.activation = activation
+
+        # the last layer HAS to be SIGMOID (For SOFTMAX)
+        for l in self.layers[:-1]:
+                l.set_research_params(activation=self.activation)
+        self.layers[-1].set_research_params(activation='sigmoid')
+
+        if self._logger is not None:
+             self._logger.debug('Setting activation type to %s '
+                               'for this and all %s layers',self.activation,len(self.layers))
+
+    def set_research_params(self,**params):
+        raise NotImplementedError
 
     def make_func(self, x, y, batch_size, output, updates, transformed_x = identity):
         '''
@@ -119,7 +85,7 @@ class Transformer(object):
 
         return theano.function(inputs=[idx],outputs=output, updates=updates, givens=given, on_unused_input='warn')
 
-    def process(self, x, y):
+    def process(self, x, y,training):
         '''
         Visit function with visitor pattern
         :param x:
@@ -162,8 +128,8 @@ class Transformer(object):
 
 class DeepAutoencoder(Transformer):
     ''' General Deep Autoencoder '''
-    def __init__(self,layers, corruption_level, rng, lam=0.0):
-        super(DeepAutoencoder,self).__init__(layers, 1, False)
+    def __init__(self,layers, corruption_level, rng, activation, dropout, lam=0.0):
+        super(DeepAutoencoder,self).__init__(layers, 1, activation, None)
         self._rng = rng
         self._corr_level = corruption_level
         self.lam = lam
@@ -173,36 +139,52 @@ class DeepAutoencoder(Transformer):
         # Need to find out what cost_vector is used for...
         self.cost_vector = None
         self.weight_regularizer = None
+        self.dropout = dropout
 
-    def process(self, x, y):
+    def process(self, x, y,training):
         self._x = x
         self._y = y
-
+        saltpepper = True
         # encoding input
         for layer in self.layers:
             W, b_prime = layer.W, layer.b_prime
 
             #if rng is specified corrupt the inputs
             if self._rng:
-                x_tilde = self._rng.binomial(size=(x.shape[0], x.shape[1]), n=1,  p=(1 - self._corr_level), dtype=theano.config.floatX) * x
+                if not saltpepper:
+                    x_tilde = self._rng.binomial(size=(x.shape[0], x.shape[1]), n=1,  p=(1 - self._corr_level), dtype=theano.config.floatX) * x
+                else:
+                    a = self._rng.binomial(size=(x.shape[0], x.shape[1]),p=(1 - self._corr_level),dtype=theano.config.floatX)
+                    b = self._rng.binomial(size=(x.shape[0], x.shape[1]),p=0.5,dtype=theano.config.floatX)
+                    c = T.eq(a, 0) * b
+                    x_tilde = x * a + c
+
                 y = layer.output(x_tilde)
             else:
                 y = layer.output(x)
-                # z = T.nnet.sigmoid(T.dot(y, W.T) + b_prime) (This is required for regularization)
+
+            if self.dropout > 0:
+                y = self._rng.binomial(size=(y.shape[1],),  p=(1 - self.dropout), dtype=theano.config.floatX) * y
 
             x = y
 
         # decoding output and obtaining reconstruction
         for layer in reversed(self.layers):
             W, b_prime = layer.W, layer.b_prime
-            x = T.nnet.sigmoid(T.dot(x,W.T) + b_prime)
-
+            if self.activation == 'sigmoid':
+                x = T.nnet.sigmoid(T.dot(x,W.T) + b_prime)
+            elif self.activation == 'relu':
+                x = T.dot(x,W.T)+b_prime
+            elif self.activation == 'softplus':
+                x = T.log(1+T.exp(T.dot(x,W.T)+b_prime))
+            else:
+                raise NotImplementedError
 
         self.weight_regularizer = T.sum(T.sum(self.layers[0].W**2, axis=1))
         #weight_reg_coeff = (0.5**2) * self.layers[0].W.shape[0]*self.layers[0].W.shape[1]
         for i,layer in enumerate(self.layers[1:]):
             #self.weight_regularizer = T.dot(self.weight_regularizer**2, self.layers[i+1].W**2)
-            self.weight_regularizer += T.sum(T.sum(layer.W**2, axis=1))
+            self.weight_regularizer += T.sqrt(T.sum(T.sum(layer.W**2, axis=1)))
             #weight_reg_coeff += (0.1**2) * layer.W.shape[0]*layer.W.shape[1]
 
         # NOTE: weight regularizer should NOT go here. Because cost_vector is a (batch_size x 1) vector
@@ -210,10 +192,20 @@ class DeepAutoencoder(Transformer):
         # costs
         # cost vector seems to hold the reconstruction error for each training case.
         # this is required for getting inputs with reconstruction error higher than average
-        self.cost_vector = T.sum(T.nnet.binary_crossentropy(x, self._x),axis=1)
+        if self.activation == 'sigmoid':
+            self.cost_vector = T.sum(T.nnet.binary_crossentropy(x, self._x),axis=1)
+            self.cost = T.mean(self.cost_vector)
+        elif self.activation == 'relu':
+            self.cost_vector = T.sum((self._x - T.log(1 + T.exp(x)))**2,axis=1)
+            self.cost = T.mean(self.cost_vector) #+ 1e-10 * self.weight_regularizer
+        elif self.activation=='softplus':
+            self.cost_vector = T.sum((self._x - x)**2,axis=1)
+            self.cost = T.mean(self.cost_vector)
+        else:
+            raise NotImplementedError
 
         self.theta = [ param for layer in self.layers for param in [layer.W, layer.b, layer.b_prime]]
-        self.cost = T.mean(self.cost_vector)# + (self.lam * self.weight_regularizer)
+        # + (self.lam * self.weight_regularizer)
 
         return None
 
@@ -259,11 +251,11 @@ class DeepAutoencoder(Transformer):
 
 class StackedAutoencoder(Transformer):
     ''' Stacks a set of autoencoders '''
-    def __init__(self, layers, corruption_level, rng):
-        super(StackedAutoencoder,self).__init__(layers, len(layers), False)
-        self._autoencoders = [DeepAutoencoder([layer], corruption_level, rng) for layer in layers]
+    def __init__(self, layers, corruption_level, rng, activation):
+        super(StackedAutoencoder,self).__init__(layers, len(layers), activation, None)
+        self._autoencoders = [DeepAutoencoder([layer], corruption_level, rng, activation) for layer in layers]
 
-    def process(self, x, y):
+    def process(self, x, y,training):
         self._x = x
         self._y = y
 
@@ -278,8 +270,8 @@ class StackedAutoencoder(Transformer):
 
 class Softmax(Transformer):
 
-    def __init__(self, layers, iterations):
-        super(Softmax,self).__init__(layers, 1, True)
+    def __init__(self, layers, iterations, rng, activation,dropout=0):
+        super(Softmax,self).__init__(layers, 1, activation=activation,logger=None)
 
         self.theta = None
         self.results = None
@@ -289,19 +281,52 @@ class Softmax(Transformer):
         self.iterations = iterations
         self.last_out = None
         self.p_y_given_x = None
+        self.dropout = dropout
+        self.training = True
+        self._rng = rng
 
-    def process(self, x, y):
+        self.softmax_logger = logging.getLogger('Softmax'+ str(random.randint(0,1000)))
+        self.softmax_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.softmax_logger.addHandler(console)
+
+    def process(self, x, y,single_node_softmax=False,training=True):
         self._x = x
         self._y = y
+        self.training = training
 
-        self.last_out = chained_output(self.layers, x);
-        self.p_y_given_x = T.nnet.softmax(chained_output(self.layers, x))
+        self.last_out = chained_output(self.layers, x)
+
 
         self.theta = [param for layer in self.layers for param in [layer.W, layer.b]]
         #self._errors = T.mean(T.neq(self.results,y))
-        #self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+        if single_node_softmax:
+            if self.dropout <= 0:
+                self.p_y_given_x = chained_output(self.layers, self._x)
+            else:
+                self.softmax_logger.debug('Dropout selected')
+                self.softmax_logger.debug('Is it training: %s\n',self.training)
+                if self.training:
+                    x_tmp = self._x
+                    # until 1 before last hidden layer
+                    for lyr in self.layers[:-1]:
+                        x_tmp = lyr.output(x_tmp)
+                        x_tmp = self._rng.binomial(size=(x_tmp.shape[1],),  p=(1 - self.dropout), dtype=theano.config.floatX) * x_tmp
+                    # softmax
+                    self.p_y_given_x = self.layers[-1].output(x_tmp)
+                else:
+                    self.p_y_given_x = chained_output(self.layers, self._x,dropout=self.dropout,training=self.training)
+
+            self.cost_vector = T.nnet.binary_crossentropy(self.p_y_given_x,self._y)
+            #-log(self.p_y_given_x)[T.eq(y,1.)]
+        else:
+            self.p_y_given_x = T.nnet.softmax(chained_output(self.layers, x))
+            self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+
         #self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x,y)
-        self.cost_vector = T.sum(T.sqrt((self.p_y_given_x-y)**2),axis=1)
+        #self.cost_vector = T.sum(T.sqrt((self.p_y_given_x-y)**2),axis=1)
         self.cost = T.mean(self.cost_vector)
 
         return None
@@ -325,7 +350,7 @@ class Softmax(Transformer):
     def error_func(self, arc, x, y, batch_size, transformed_x = identity):
         return self.make_func(x,y,batch_size,self.cost,None, transformed_x)
 
-    def get_y_labels(self, act, x, y, batch_size, transformed_x = identity):
+    def get_y_labels(self, arc, x, y, batch_size, transformed_x = identity):
         return self.make_func(x, y, batch_size, self._y, None, transformed_x)
 
     def get_predictions_func(self, arc, x, y, batch_size, transformed_x = identity):
@@ -338,12 +363,19 @@ class Pool(object):
 
     #theano.config.compute_test_value = 'warn'
     ''' A ring buffer (Acts as a Queue) '''
-    __slots__ = ['size', 'max_size', 'num_classes','position', 'data', 'data_y', '_update']
+    __slots__ = ['size', 'max_size', 'num_classes','position', 'data', 'data_y', '_update','pool_logger']
 
     def __init__(self, row_size, max_size,num_classes):
         self.size = 0
         self.max_size = max_size
         self.position = 0
+
+        self.pool_logger = logging.getLogger('Pool'+ str(random.randint(0,1000)))
+        self.pool_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.pool_logger.addHandler(console)
 
         self.data = theano.shared(np.empty((max_size, row_size), dtype=theano.config.floatX), 'pool' )
         self.data_y = theano.shared(np.empty((max_size,num_classes), dtype=theano.config.floatX), 'pool_y')
@@ -361,19 +393,19 @@ class Pool(object):
         self._update = theano.function([pos, x, y], updates=update)
 
     def remove(self, idx, batch_size):
-        print('Pool: pool size: ',self.size)
-        print('removing batch at ', idx, ' from pool')
+        self.pool_logger.debug('Pool size: %s',self.size)
+        self.pool_logger.debug('Removing batch at %s from pool',idx)
         pool_indexes = self.as_size(self.size,batch_size)
-        print('Pool: pool indexes ', pool_indexes)
-        print('Pool: max idx: ', np.max(pool_indexes))
+        self.pool_logger.debug('Pool indexes %s', pool_indexes)
+        self.pool_logger.debug('Max idx in pool: ', np.max(pool_indexes))
         for i in range(idx,np.max(pool_indexes)):
-            print('replacing data at ', i, ' with data at ', (i+1))
+            self.pool_logger.debug('replacing data at %s with data at %s', i,(i+1))
             T.set_subtensor(self.data[i*batch_size:(i)*batch_size],self.data[(i+1)*batch_size:(i+1)*batch_size])
             T.set_subtensor(self.data_y[i*batch_size:(i)*batch_size],self.data_y[(i+1)*batch_size:(i+1)*batch_size])
 
-        print('The position was at ', self.position)
+        self.pool_logger.debug('The position was at %s', self.position)
         self.position = self.position - batch_size
-        print('Now the position at ', self.position)
+        self.pool_logger.debug('Now the position at %s', self.position)
         self.size = self.position
 
     def add(self, x, y, rows=None):
@@ -424,14 +456,14 @@ class StackedAutoencoderWithSoftmax(Transformer):
 
     __slots__ = ['_autoencoder', '_layered_autoencoders', '_combined_objective', '_softmax', 'lam', '_updates', '_givens', 'rng', 'iterations', '_error_log','_reconstruction_log','_valid_error_log']
 
-    def __init__(self, layers, corruption_level, rng, lam, iterations):
-        super(StackedAutoencoderWithSoftmax,self).__init__(layers, 1, True)
+    def __init__(self, layers, corruption_level, rng, lam, iterations, activation):
+        super(StackedAutoencoderWithSoftmax,self).__init__(layers, 1, activation=activation, logger=None)
 
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
-        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], corruption_level, rng)
+        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation)
+        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], corruption_level, rng,activation=activation)
                                        for i, layer in enumerate(self.layers[:-1])] #[:-1] gets all items except last
         #self._softmax = Softmax(layers,iterations)
-        self._softmax = CombinedObjective(layers, corruption_level, rng, lam, iterations)
+        self._softmax = CombinedObjective(layers, corruption_level, rng, lam, iterations,activation=activation)
         self.lam = lam
         self.iterations = iterations
         self.rng = np.random.RandomState(0)
@@ -440,15 +472,15 @@ class StackedAutoencoderWithSoftmax(Transformer):
         self._reconstruction_log = []
         self._valid_error_log = []
 
-    def process(self, x, y):
+    def process(self, x, y,training):
         self._x = x
         self._y = y
 
-        self._autoencoder.process(x,y)
-        self._softmax.process(x,y)
+        self._autoencoder.process(x,y,training=training)
+        self._softmax.process(x,y,training=training)
 
         for ae in self._layered_autoencoders:
-            ae.process(x, y)
+            ae.process(x, y,training=training)
 
     def train_func(self, arc, learning_rate, x, y, v_x, v_y,batch_size, transformed_x=identity):
 
@@ -488,28 +520,35 @@ class StackedAutoencoderWithSoftmax(Transformer):
 
 class MergeIncrementingAutoencoder(Transformer):
 
-    __slots__ = ['_autoencoder', '_layered_autoencoders', '_combined_objective', '_softmax', 'lam', '_updates', '_givens', 'rng', 'iterations']
+    __slots__ = ['_autoencoder', '_layered_autoencoders', '_combined_objective', '_softmax', 'lam', '_updates', '_givens', 'rng', 'iterations','minc_logger']
 
-    def __init__(self, layers, corruption_level, rng, lam, iterations):
-        super(MergeIncrementingAutoencoder,self).__init__(layers, 1, False)
+    def __init__(self, layers, corruption_level, rng, lam, iterations, activation,dropout):
+        self.minc_logger = logging.getLogger('MINC-AE'+ str(random.randint(0,1000)))
+        self.minc_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.minc_logger.addHandler(console)
 
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
-        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], corruption_level, rng)
+        super(MergeIncrementingAutoencoder,self).__init__(layers, 1, activation=activation, logger=self.minc_logger)
+
+        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation,dropout=dropout)
+        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], corruption_level, rng, activation=activation,dropout=dropout)
                                        for i, layer in enumerate(self.layers[:-1])] #[:-1] gets all items except last
-        self._softmax = Softmax(layers,iterations)
-        self._combined_objective = CombinedObjective(layers, corruption_level, rng, lam, iterations)
+        self._softmax = Softmax(layers,iterations,rng,activation=activation,dropout=dropout)
+        self._combined_objective = CombinedObjective(layers, corruption_level, rng, lam, iterations,activation=activation,dropout=dropout)
         self.lam = lam
         self.iterations = iterations
         self.rng = np.random.RandomState(0)
 
-    def process(self, x, y):
+    def process(self, x, y,single_node_softmax,training):
         self._x = x
         self._y = y
-        self._autoencoder.process(x,y)
-        self._softmax.process(x,y)
-        self._combined_objective.process(x,y)
+        self._autoencoder.process(x,y,training=training)
+        self._softmax.process(x,y,single_node_softmax,training=training)
+        self._combined_objective.process(x,y,single_node_softmax,training=training)
         for ae in self._layered_autoencoders:
-            ae.process(x,y)
+            ae.process(x,y,training=training)
 
     def merge_inc_func(self, learning_rate, batch_size, x, y):
 
@@ -568,10 +607,24 @@ class MergeIncrementingAutoencoder(Transformer):
 
             idx = T.iscalar('idx')
 
+
             given = {
                 self._x : x[idx*batch_size : (idx+1) * batch_size],
                 self._y : y[idx*batch_size : (idx+1) * batch_size]
             }
+            # this is to test after implementing DeepRLMultiSoftmax
+            '''print 'i:',i,',j:',j
+            test_given = {
+                self._x : x[idx*batch_size : (idx+1) * batch_size],
+                self._y : y[idx*batch_size : (idx+1) * batch_size]
+            }
+            test_given_y = {
+                self._y : y[idx*batch_size : (idx+1) * batch_size]
+            }
+            test_y_eq_1 = theano.function([idx],T.eq(self._y,1),givens=test_given_y)
+            print(test_y_eq_1(0))
+            test_mi_train = theano.function([idx],self._softmax.cost,givens=test_given)
+            print(test_mi_train(0))'''
 
             mi_train = theano.function([idx, self.layers[j].idx], mi_cost, updates=mi_updates, givens=given)
             all_mi_train_funcs.append(mi_train)
@@ -588,7 +641,9 @@ class MergeIncrementingAutoencoder(Transformer):
             :return:
             '''
 
-            verbose = True
+            reg_added_node_idx = []
+            reg_removed_node_idx = []
+
             prev_map = {}
             #bottom_dimensions = self.layers[layer_idx].initial_size[0]
 
@@ -606,14 +661,14 @@ class MergeIncrementingAutoencoder(Transformer):
             merge_count = int(merge_percentage * self.layers[layer_idx].initial_size[1])
             inc_count = int(inc_percentage * self.layers[layer_idx].initial_size[1])
 
-            if verbose:
-                print "################## Retrieving hyper parameters (Layer ",layer_idx,")####################"
-                print "Layer weights (Transpose): ",layer_weights.shape
-                print "Layer bias: ",layer_bias.shape
-                print "Layer\'s bottom size: ",bottom_dimensions
-                print "Merge count: ",merge_count
-                print "Increment count: ",inc_count
-                print ""
+
+            self.minc_logger.debug("RETREIVING HYPER PARAMETERS OF Layer %s \n", layer_idx)
+            self.minc_logger.debug("Layer weights (Transpose): %s",layer_weights.shape)
+            self.minc_logger.debug("Layer bias: %s",layer_bias.shape)
+            self.minc_logger.debug("Layer\'s bottom size: %s",bottom_dimensions)
+            self.minc_logger.debug("Merge count: %s",merge_count)
+            self.minc_logger.debug("Increment count: %s",inc_count)
+
 
             # if there's nothing to merge or increment
             if merge_count == 0 and inc_count == 0:
@@ -643,20 +698,19 @@ class MergeIncrementingAutoencoder(Transformer):
                     #add it to the used list
                     used.update([x_i,y_i])
                     empty_slots.append(y_i)
-                    if verbose:
-                        print "x_i,y_i: ",x_i,y_i
-                        print "Changing weight & bias at ",x_i," with (x_i+y_i)/2"
 
-            if verbose:
-                print ""
+                    self.minc_logger.debug("x_i,y_i: %s,%s",x_i,y_i)
+                    self.minc_logger.debug("Changing weight & bias at %s with (x_i+y_i)/2",x_i)
+
+            self.minc_logger.debug('\n')
             #print('used: ',used)
             #print('empty_slots: ',empty_slots)
 
             #get the new size of layer
             new_size = layer_weights.shape[0] + inc_count - len(empty_slots)
             current_size = layer_weights.shape[0]
-            if verbose:
-                print "current -> new (size): ",current_size,new_size
+
+            self.minc_logger.debug("current -> new (size): %s -> %s",current_size,new_size)
 
             # if new size is less than current... that is reduce operation
             if new_size < current_size:
@@ -669,12 +723,13 @@ class MergeIncrementingAutoencoder(Transformer):
                 for dest, src in prev_map.items():
                     layer_weights[dest] = layer_weights[src]
                     layer_weights[src] = np.asarray(self.rng.uniform(low=init, high=init, size=layer_weights.shape[1]), dtype=theano.config.floatX)
-                    if verbose:
-                        print "Replacing weight at ",dest,"(",layer_weights[dest].shape,") with ",src," (",layer_weights[src].shape,")"
 
-                if verbose:
-                    print "Layer weights (transpose) after replacement: ",layer_weights.shape
-                    print ""
+                    self.minc_logger.debug("Replacing weight at %s (%s) with %s (%s)",
+                                  dest,layer_weights[dest].shape,src,layer_weights[src].shape)
+                    if layer_idx == len(self.layers)-2:
+                        reg_removed_node_idx.append(src)
+
+                self.minc_logger.debug("Layer weights (transpose) after replacement: %s \n",layer_weights.shape)
                 empty_slots = []
             # increment operation
             else:
@@ -683,25 +738,25 @@ class MergeIncrementingAutoencoder(Transformer):
             # new_size: new layer size after increment/reduce op
             # prev_dimension: size of input layer
             new_layer_weights = np.zeros((new_size,bottom_dimensions), dtype = theano.config.floatX)
-            print 'Old layer ',layer_idx,' size: ',layer_weights.shape
-            print 'New layer ',layer_idx,' size: ',new_layer_weights.shape
+            self.minc_logger.info('Old layer %s size: %s',layer_idx,layer_weights.shape)
+            self.minc_logger.info('New layer %s size: %s',layer_idx,new_layer_weights.shape)
 
             # the existing values from layer_weights copied to new layer weights
             # and it doesn't matter if layer_weights.shape[0]<new_layer_weights.shape[0] it'll assign values until it reaches the end
             new_layer_weights[:layer_weights.shape[0], :layer_weights.shape[1]] = layer_weights[:new_layer_weights.shape[0], :new_layer_weights.shape[1]]
-            if verbose:
-                print "Layer weights (after Action): ",new_layer_weights.shape
-                print "Copied all the weights from old matrix to new matrix"
-                print ""
+
+            self.minc_logger.debug("Layer weights (after Action): %s",new_layer_weights.shape)
+            self.minc_logger.debug("Copied all the weights from old matrix to new matrix\n")
 
             # get all empty_slots that are < new_size  +  list(prev_size->new_size)
             empty_slots = [slot for slot in empty_slots if slot < new_size] + list(range(layer_weights.shape[0],new_size))
             new_layer_weights[empty_slots] = np.asarray(self.rng.uniform(low=-init, high=init, size=(len(empty_slots), bottom_dimensions)), dtype=theano.config.floatX)
 
             # fills missing entries with zero
-            print 'Old layer ',layer_idx,' size (bias): ',layer_bias.shape
+            self.minc_logger.info('Old layer %s size (bias): %s',layer_idx,layer_bias.shape)
             layer_bias.resize(new_size, refcheck=False)
-            print 'New layer ',layer_idx,' size (bias): ',layer_bias.shape
+            self.minc_logger.info('New layer %s size (bias): %s',layer_idx,layer_bias.shape)
+
             layer_bias_prime = self.layers[0].b_prime.get_value().copy()
             layer_bias_prime.resize(bottom_dimensions)
 
@@ -717,20 +772,17 @@ class MergeIncrementingAutoencoder(Transformer):
             #            layer_greedy[0](i, empty_slots)
 
             top_layer_weights = self.layers[layer_idx+1].W.get_value().copy()
-            if verbose:
-                print "Layer weights top size: ",top_layer_weights.shape
-                print "Layer weights top row size: ",prev_dimensions
+
+            self.minc_logger.debug("Layer weights top size: %s",top_layer_weights.shape)
+            self.minc_logger.debug("Layer weights top row size: %s",prev_dimensions)
             for dest, src in prev_map.items():
                 top_layer_weights[dest] = top_layer_weights[src]
                 top_layer_weights[src] = np.zeros(top_layer_weights.shape[1])
 
-            if verbose:
-                print "Layer weights top before resize: ",top_layer_weights.shape
+            self.minc_logger.debug("Layer weights top before resize: %s",top_layer_weights.shape)
             top_layer_weights.resize((prev_dimensions, self.layers[layer_idx+1].W.get_value().shape[1]),refcheck=False)
-            if verbose:
-                print "Layer weights top after resize: ",top_layer_weights.shape
-                print "####################################################"
-                print ""
+
+            self.minc_logger.debug("Layer weights top after resize: %s \n",top_layer_weights.shape)
 
             if layer_idx != len(self.layers)-1:
                 top_layer_prime = self.layers[layer_idx+1].b_prime.get_value().copy()
@@ -741,30 +793,35 @@ class MergeIncrementingAutoencoder(Transformer):
 
             # finetune with supervised
             if empty_slots:
+                if layer_idx == len(self.layers)-2:
+                    reg_added_node_idx.extend(empty_slots)
+
                 for _ in range(self.iterations):
                     for i in pool_indexes:
                         all_mi_train_funcs[layer_idx](i, empty_slots)
+
+            return reg_added_node_idx,reg_removed_node_idx
 
         return merge_model
 
 
 class CombinedObjective(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, lam, iterations):
-        super(CombinedObjective,self).__init__(layers, 1, True)
+    def __init__(self, layers, corruption_level, rng, lam, iterations, activation, dropout):
+        super(CombinedObjective,self).__init__(layers, 1, activation=activation,logger=None)
 
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
-        self._softmax = Softmax(layers,1)
+        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng,activation=activation,dropout=dropout)
+        self._softmax = Softmax(layers,1, rng,activation=activation,dropout=dropout)
         self.lam = lam
         self.iterations = iterations
         self.cost = None
 
-    def process(self, x, yy):
+    def process(self, x, yy,single_node_softmax,training):
         self._x = x
         self._y = yy
 
-        self._autoencoder.process(x,yy)
-        self._softmax.process(x,yy)
+        self._autoencoder.process(x,yy,training=training)
+        self._softmax.process(x,yy,single_node_softmax,training=training)
 
         self.cost = self._softmax.cost + self.lam * self._autoencoder.cost
 
@@ -801,15 +858,22 @@ class CombinedObjective(Transformer):
 
 class DeepReinforcementLearningModel(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, r_pool_size, ft_pool_size, controller,simi_thresh, num_classes, pool_with_not_bump):
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, r_pool_size, ft_pool_size, controller,simi_thresh, num_classes, activation, dropout):
 
-        super(DeepReinforcementLearningModel,self).__init__(layers, 1, True)
+        self.deeprl_logger = logging.getLogger('DeepRL'+str(random.randint(0,1000)))
+        self.deeprl_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.deeprl_logger.addHandler(console)
+
+        super(DeepReinforcementLearningModel,self).__init__(layers, 1, activation=activation,logger=self.deeprl_logger)
 
         self._mi_batch_size = mi_batch_size
         self._controller = controller
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
-        self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations)
-        self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations)
+        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation,dropout=dropout)
+        self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation,dropout=dropout)
+        self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation,dropout=dropout)
 
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
@@ -817,6 +881,8 @@ class DeepReinforcementLearningModel(Transformer):
         self._hard_pool = Pool(layers[0].initial_size[0], r_pool_size,num_classes)
         self._diff_pool = Pool(layers[0].initial_size[0], ft_pool_size,num_classes)
 
+        self._rng = rng
+        self.corruption_levels = corruption_level
         self.iterations = iterations
         self.lam = lam
         self.simi_thresh = simi_thresh
@@ -833,7 +899,21 @@ class DeepReinforcementLearningModel(Transformer):
 
         self.episode = 0
         self.mean_batch_pool = []
-        self.pool_with_not_bump = pool_with_not_bump
+
+        self.pool_with_not_bump = True
+        self.single_node_softmax = False
+        self.test_mode = False
+
+    def set_research_params(self,**params):
+        self.deeprl_logger.debug('RETRIEVING RESEARCH PARAMETERS\n')
+        self.deeprl_logger.debug(params)
+
+        if 'pool_with_not_bump' in params:
+            self.pool_with_not_bump = params['pool_with_not_bump']
+        if 'single_node_softmax' in params:
+            self.single_node_softmax = params['single_node_softmax']
+        if 'test_mode' in params:
+            self.test_mode = params['test_mode']
 
     def set_episode_count(self,val):
         self.episode = val
@@ -848,18 +928,17 @@ class DeepReinforcementLearningModel(Transformer):
             new_hid_sizes.append(l.W.get_value().shape[1])
         return new_hid_sizes
 
-    def process(self, x, y):
+    def process(self, x, y,training):
         self._x = x
         self._y = y
-        self._autoencoder.process(x, y)
-        self._softmax.process(x, y)
-        self._merge_increment.process(x, y)
+        self._autoencoder.process(x, y,training=training)
+        self._softmax.process(x, y,self.single_node_softmax,training=training)
+        self._merge_increment.process(x, y,self.single_node_softmax,training=training)
 
 
     def pool_if_different(self, pool, batch_id, batch_size,x, y):
 
-        print 'Pool if different ...'
-        print 'pool_if_different: pool size: ',pool.size
+        self.deeprl_logger.debug('Pool size (before): %s',pool.size)
         def magnitude(x):
             '''  returns sqrt(sum(v(i)^2)) '''
             return sum([v **2 for v in x]) ** 0.5
@@ -906,10 +985,10 @@ class DeepReinforcementLearningModel(Transformer):
             #mean = np.mean([ v[1] for v in batch_scores ])
             #print('Batch Scores ...')
             #print(batch_scores)
-            print('max simi: ', np.max([s[1] for s in batch_scores]))
+            self.deeprl_logger.debug('Max Similarity (Current vs Pool): %.5f', np.max([s[1] for s in batch_scores]))
             # all non_station experiments used similarity threshold 0.7
             if np.max([s[1] for s in batch_scores]) < self.simi_thresh:
-                print('added to pool', batch_id)
+                self.deeprl_logger.debug('Adding batch %s to pool', batch_id)
                 if len(self.mean_batch_pool) == pool.max_size/batch_size:
                     self.mean_batch_pool.pop(0)
                 self.mean_batch_pool.append(get_mean(batch_id))
@@ -928,7 +1007,7 @@ class DeepReinforcementLearningModel(Transformer):
                 pool.add_from_shared(batch_id,batch_size,x,y)'''
 
         else:
-            print 'pool is empty. added to pool', batch_id
+            self.deeprl_logger.debug('Pool is empty. adding batch %s to pool', batch_id)
             self.mean_batch_pool.append(get_mean(batch_id))
             pool.add_from_shared(batch_id, batch_size, x, y)
 
@@ -997,15 +1076,19 @@ class DeepReinforcementLearningModel(Transformer):
 
         hard_examples_func = self._autoencoder.get_hard_examples(arc, x, y, batch_size, apply_x)
 
-        # causing touble with multi log reg########################
         train_func_pool = self._softmax.train_func(arc, learning_rate, self._pool.data, self._pool.data_y, batch_size, apply_x)
         train_func_hard_pool = self._softmax.train_func(arc, learning_rate, self._hard_pool.data, self._hard_pool.data_y, batch_size, apply_x)
         train_func_diff_pool = self._softmax.train_func(arc, learning_rate, self._diff_pool.data, self._diff_pool.data_y, batch_size, apply_x)
-        ##########################################
+
+        if self.test_mode:
+            idx = T.iscalar('test_idx')
+            test_y_1_indices = theano.function([idx],T.eq(self._y,1.),givens={self._y:y[idx*batch_size:(idx+1)*batch_size]})
+            test_pYgivenX = theano.function([idx],self._softmax._softmax.p_y_given_x,givens={self._x:x[idx*batch_size:(idx+1)*batch_size]})
+            test_output = theano.function([idx],chained_output(self.layers, self._x),givens={self._x:x[idx*batch_size:(idx+1)*batch_size]})
+
         def train_pool(pool, pool_func, amount):
-            print '[train_pool] pool size: ',int(pool.size),', ',amount
+            self.deeprl_logger.info('\nTRAINING WITH POOL (SHUFFLED) OF SIZE %s \n',int(pool.size))
             pool_indexes = pool.as_size(int(pool.size * amount), batch_size)
-            #print('index before shuffle: ', pool_indexes)
             np.random.shuffle(pool_indexes)
             for i in pool_indexes:
                 pool_func(i)
@@ -1019,21 +1102,28 @@ class DeepReinforcementLearningModel(Transformer):
         # get early stopping
         def train_adaptively(batch_id):
             from math import sqrt
-            print "[train_adaptively] Info all layers"
-            for l_i,layer in enumerate(self.layers):
-                print 'W: ',l_i,': ',layer.W.get_value().shape
-                print 'b: ',l_i,': ',layer.b.get_value().shape
-                print 'b_prime: ',l_i,': ',layer.b_prime.get_value().shape
 
+
+            # For Test purpose only
+            if self.test_mode:
+                self.deeprl_logger.debug('Testing y==1 indices in batch %s',batch_id)
+                self.deeprl_logger.debug(test_y_1_indices(batch_id).flatten().tolist())
+
+                self.deeprl_logger.debug('Testing P(Y|X) in batch %s',batch_id)
+                self.deeprl_logger.debug(test_pYgivenX(batch_id).flatten().tolist())
+
+                self.deeprl_logger.debug('Testing chained_output for batch %s',batch_id)
+                self.deeprl_logger.debug(test_output(batch_id).flatten().tolist())
 
             self._error_log.append(np.asscalar(error_func(batch_id)))
-
+            self.deeprl_logger.debug('Softmax Error for batch %s: %.4f',batch_id,self._error_log[-1])
             self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
             err_for_layers = [self._valid_error_log[-1]]
 
             rec_err = reconstruction_func(batch_id)
-            #print('Reconstruction Error: ',rec_err,', batch id: ', batch_id)
             self._reconstruction_log.append(np.asscalar(rec_err))
+            self.deeprl_logger.debug('Reconstruction Error for batch %s: %.4f', batch_id, rec_err)
+
             self._neuron_balance_log.append(self.neuron_balance)
 
             self._pool.add_from_shared(batch_id, batch_size, x, y)
@@ -1064,7 +1154,7 @@ class DeepReinforcementLearningModel(Transformer):
                 'curr_error': err_for_layers[-1],
                 'neuron_balance': self._neuron_balance_log[-1],
                 'reconstruction': self._reconstruction_log[-1],
-                'r_5': moving_average(self._reconstruction_log, 5)
+                'r_15': moving_average(self._reconstruction_log, 15)
             }
 
             def merge_increment(func, pool, amount, merge, inc,layer_idx):
@@ -1072,14 +1162,13 @@ class DeepReinforcementLearningModel(Transformer):
                 #nonlocal neuron_balance
                 change = 1 + inc - merge #+ 0.05 * ((self.layers[1].W.get_value().shape[0]/self.layers[1].initial_size[0])-2.)
 
-
-                print 'neuron balance (', layer_idx,')', self.neuron_balance[layer_idx], \
-                    '=>', self.neuron_balance[layer_idx] * change
+                self.deeprl_logger.debug('Neuron balance (prev=>current) for layer %s: %.3f => %.3f',
+                              layer_idx, self.neuron_balance[layer_idx], self.neuron_balance[layer_idx] * change)
                 self.neuron_balance[layer_idx] *= change
 
-                # pool.as_size(int(pool.size * amount), self._mi_batch_size) seems to provide indexes
+                add_idx,rem_idx = func(pool.as_size(int(pool.size * amount), self._mi_batch_size), merge, inc, layer_idx)
+                return add_idx,rem_idx
 
-                func(pool.as_size(int(pool.size * amount), self._mi_batch_size), merge, inc, layer_idx)
 
             funcs = {
                 'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._pool),
@@ -1098,14 +1187,13 @@ class DeepReinforcementLearningModel(Transformer):
                 err_for_layers.append(np.asscalar(error_func(batch_id)))
                 data['curr_error'] = err_for_layers[-1]
 
-            print "############# [train_adaptively] episode: ",self.episode,"##############"
-            print "[train_adaptively] Errors for layers: ", err_for_layers
-            print "[train_adaptively] Neuron balance: ", self.neuron_balance
-            str_size = "[train_adaptively] " + str(self.layers[0].W.get_value().shape[0])
+            self.deeprl_logger.info("\nTRAINING FOR EPISODE: %s\n",self.episode)
+            self.deeprl_logger.debug("Errors for layers: %s", err_for_layers)
+            self.deeprl_logger.debug("Neuron balance: %s", self.neuron_balance)
+            str_size = str(self.layers[0].W.get_value().shape[0])
             for l in self.layers:
                 str_size += " => " + str(l.W.get_value().shape[1])
-            print str_size
-            print "##########################################################\n"
+            self.deeprl_logger.info(str_size+'\n')
 
             train_func(batch_id)
 
@@ -1117,20 +1205,47 @@ class DeepReinforcementLearningModel(Transformer):
 
         return train_adaptively,update_pool
 
-    def visualize_nodes(self,learning_rate,layer_idx):
+    def visualize_nodes(self,learning_rate,iterations,layer_idx,activation,use_scan=False):
         in_size = self.layers[0].W.get_value().shape[0]
-        width = int(in_size**0.5)
-        idx = T.iscalar('idx')
-        max_inputs = []
-        for n in range(self.layers[layer_idx].W.get_value().shape[1]):
-            n_max_input = theano.shared(np.random.rand(in_size),'max_input')
-            h_out = -chained_output(self.layers[:layer_idx+1],n_max_input)[idx]
-            theta = [n_max_input]
-            updates = [(param, param - learning_rate * grad) for param,grad in zip(theta,T.grad(h_out,wrt=theta))]
-            max_in_function = theano.function(inputs=[idx],outputs=[],updates=updates)
-            max_in_function(n)
-            max_inputs.append(n_max_input.get_value().reshape(width,width))
 
+        def in_bounds(x):
+            if np.sqrt(np.sum(x**2))>1:
+                return False
+            else:
+                return True
+        if not use_scan:
+            idx = T.iscalar('idx')
+            max_inputs = []
+            for n in range(self.layers[layer_idx].W.get_value().shape[1]):
+                if activation == 'sigmoid':
+                    n_max_input = theano.shared(np.random.rand(in_size)*(1.0/in_size),'max_input')
+                elif activation == 'relu':
+                    n_max_input = theano.shared(0.5 + np.random.rand(in_size)*0.4,'max_input')
+                elif activation == 'softplus':
+                    n_max_input = theano.shared(np.random.rand(in_size)*(1.0/in_size),'max_input')
+                else:
+                    raise NotImplementedError
+
+                h_out = chained_output(self.layers[:layer_idx+1],n_max_input,activation=activation)[idx]
+                theta = [n_max_input]
+                updates = [(param, param + learning_rate * grad) for param,grad in zip(theta,T.grad(h_out,wrt=theta))]
+                max_in_function = theano.function(inputs=[idx],outputs=h_out,updates=updates)
+
+                curr_hout = 0
+                for it in range(iterations):
+                    if in_bounds(n_max_input.get_value()):
+                        curr_hout = max_in_function(n)
+                        if curr_hout>0.999:
+                            break
+                    else:
+                        break
+
+                self.deeprl_logger.debug('stopping after %s iteration for %s hidden unit (%2.4f)',it,n,curr_hout)
+                max_in = n_max_input.get_value()
+                max_in = max_in/np.max(max_in)
+                max_inputs.append(max_in)
+        else:
+            raise NotImplementedError
         return max_inputs
 
 
@@ -1178,107 +1293,205 @@ class DeepReinforcementLearningModel(Transformer):
 
         return check_forward_func
 
-class DeepRLWithMultiLogReg(DeepReinforcementLearningModel):
+class DeepReinforcementLearningModelMultiSoftmax(object):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size, controllers,simi_thresh = 0.7):
-        self.arcs = 1
-        self.models = []
-        for l_i,out_l in enumerate(layers[-1]):
-            layers_tmp = []
-            layers_tmp.extend(layers[:-1])
-            print('[init] layers_tmp: ',len(layers_tmp))
-            layers_tmp.append(out_l)
-            print('[init] layer 0 initial size: ',layers_tmp[1].initial_size)
-            self.models.append(DeepReinforcementLearningModel(
-                layers_tmp,corruption_level,rng,iterations,lam,mi_batch_size,pool_size,
-                controllers[l_i],simi_thresh))
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, r_pool_size, ft_pool_size, controller,simi_thresh, num_classes, activation,dropout):
 
+        self.deepms_logger = logging.getLogger('DeepRLMultiSoftmax')
+        self.deepms_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.deepms_logger.addHandler(console)
+
+        #super(DeepReinforcementLearningModelMultiSoftmax,self).__init__(layers, 1, self.deepms_logger)
+
+        #self.layers = layers
         self._mi_batch_size = mi_batch_size
+        # _pool : has all the data points
+        # _hard_pool: has data points only that are above average reconstruction error
 
-    def process(self, x, y):
-        self._x = x
-        self._y = y
-        for model in self.models:
-            model.process(x,y)
+        self.layers = layers
+        self._rng = rng
+        self.corruption_levels = corruption_level
+        self.iterations = iterations
+        self.lam = lam
+        self.simi_thresh = simi_thresh
+        self.train_distribution = []
+        self.pool_distribution = []
+        self.num_classes = num_classes
+        self._error_log = []
+        self._valid_error_log = []
+        self._reconstruction_log = []
+        self._neuron_balance_log = []
+        self._network_size_log = []
+        self.dropout = dropout
+        self.neuron_balance = [1 for _ in range(len(layers[:-1]))]
 
-    def train_func(self, arc, learning_rate, x, y, v_x, v_y, batch_size, apply_x=identity):
+        self._controller = controller
 
-        idx = T.iscalar('idx')
-        batch_mean = T.mean(self._y)
-        check_fwd_func = theano.function(inputs=[idx],outputs=batch_mean,givens={
-                self._y:y[idx*batch_size:(idx+1)*batch_size]
-            })
+        self.episode = 0
+        self.mean_batch_pool = []
+        self.pool_with_not_bump = True
+        self.single_node_softmax = True
 
-        print('[train_func] models: ',len(self.models))
-        def train_adaptively(batch_id):
-            #NOTE: we might need to have separate epoch variables for each model
-            #find the correct model and call train adaptively in DeepRL
+        self._softmax = []
+        self._merge_increment = []
 
-            forward = [True if check_fwd_func(batch_id)>0.5 else False]
-            print('[train_adaptively] can we go fwd? ',forward)
-            print('[train_adaptively] models: ',len(self.models))
-            if forward:
-                train_adaptive_func = self.models[1].train_func(arc, learning_rate, x, y, batch_size, apply_x)
-                train_adaptive_func(batch_id)
-                return -1
-            else:
+        self.deepRL_set = []
 
-                for m_i in [0,2]:
-                    #get the output without testing
-                    outlist = self.models[m_i].get_predictions_func(self, arc, x, batch_size, apply_x)
-                    print('[train_adaptively] outlist: ',outlist)
-                    output_max_args = np.argmax(outlist,axis=0)
-                    output = 1 if np.mean(output_max_args)>0.5 else 0
-                    # means we can move in that direction
-                    if output == 1:
-                        #send this action
-                        print('[train_adaptively] got out 1 for ',m_i, ' sec network ')
-                        return m_i
+        self.deepms_logger.info('BUILDING MULTI SOFTMAX LAYERS ...\n')
+        self.deepms_logger.debug('Creating 1 node softmax layers per each action')
 
-                print('[train_adaptively] no secondary net gave 1, returning last net')
-                return m_i
+        for n in range(self.num_classes):
+            self.deepms_logger.debug('\tSoftmax layer for action %s',n)
+            multi_softmax_layers = []
+            for l in layers[:-1]:
+                multi_softmax_layers.append(l)
+            multi_softmax_layers.append(layers[-1][n])
+            self.deepRL_set.append(
+                DeepReinforcementLearningModel(
+                    multi_softmax_layers,self.corruption_levels,self._rng,self.iterations,
+                    self.lam,self._mi_batch_size,r_pool_size,ft_pool_size,controller[n],
+                    simi_thresh,1,activation=activation,dropout=dropout
+                )
+            )
+            self.deepRL_set[-1].set_research_params(pool_with_not_bump=False,single_node_softmax=True,test_mode=False)
 
-        def train_secondary_adaptively(batch_id,m):
-            # NOTE: we could use only the last batch. right now using all
-            # call this method with previous batches if most of y values are 0s in the next batches
+        self.deepms_logger.debug('CHECKING IF LAYERS SETUP CORRECTLY (DeepRLMultiSoftmax) ...')
 
-            correct = [True if check_fwd_func(batch_id)>0.5 else False]
-            print('[train_secondary_adap] correct? ',correct)
-            #create new Y values
-            if correct:
-                new_y = [1 for _ in range(x.get_value().shape[0])]
-                th_new_y = T.cast(theano.shared(np.asarray(new_y,dtype=theano.config.floatX)),'int32')
-            else:
-                new_y = [0 for _ in range(x.get_value().shape[0])]
-                th_new_y = T.cast(theano.shared(np.asarray(new_y,dtype=theano.config.floatX)),'int32')
+        for ae_i in range(len(self.deepRL_set[0].layers[:-1])):
+            id_list_ae = [id(deeprl.layers[ae_i]) for deeprl in self.deepRL_set]
+            id_0 = id(self.deepRL_set[0].layers[ae_i])
+            assert all(x==id_0 for x in id_list_ae)
 
-            train_adaptive_func2 = self.models[m].train_func(arc, learning_rate, x, th_new_y, batch_size, apply_x)
+            self.deepms_logger.debug('\tSame Autoencoder layer is used for all DeepRLs layer %s',ae_i)
 
-            train_adaptive_func2(batch_id)
+        id_list_softmax = [id(deeprl.layers[-1]) for deeprl in self.deepRL_set[1:]]
+        id_softmax_0 = id(self.deepRL_set[0].layers[-1])
+        assert any(x != id_softmax_0 for x in id_list_softmax)
 
-
-        return train_adaptively,train_secondary_adaptively
+        self.deepms_logger.debug('Different Softmax layers are used for each DeepRLs\n')
 
 
-    def set_train_distribution(self, t_distribution,m):
-        self.models[m].train_distribution = t_distribution
+    def set_episode_count(self,val):
+        self.episode = val
+
+    def set_research_params(self,**params):
+        raise NotImplementedError
+
+    def restore_pool(self,batch_size,X,Y,DX,DY):
+        i = 0
+        for x,y,dx,dy in zip(X,Y,DX,DY):
+            self.deepRL_set[i].restore_pool(batch_size,x,y,dx,dy)
+
+    def get_updated_hid_sizes(self):
+        return self.deepRL_set[0].get_updated_hid_sizes()
+
+    def process(self, x, y,training):
+        for drl in self.deepRL_set:
+            drl.process(x,y,training=training)
+
+    def train_func(self, arc, learning_rate, x, y, batch_size, drl_id, apply_x=identity):
+        return self.deepRL_set[drl_id].train_func(arc, learning_rate, x, y, batch_size)
+
+    def rectify_multi_softmax_layers(self,drl_id):
+        self.deepms_logger.debug('Retrieving nodes added/removed from DeepRL %s',drl_id)
+        add_idx,rem_idx = self.deepRL_set[drl_id]._controller[-1].add_idx, self.deepRL_set[drl_id]._controller[-1].rem_idx
+
+        drl_indices = [a for a in range(self.num_classes)]
+        del drl_indices[drl_id]
+
+        for i in drl_indices:
+            self.deepms_logger.debug('Rectifying softmax layer of deepRL %s, (Add/Rem) Sizes %s/%s',i,len(add_idx),len(rem_idx))
+            if len(add_idx)>0:
+                self.deepms_logger.debug('Adding new weights')
+                self.change_weights_at_idx(i,add_idx,self.deepRL_set[drl_id].layers[-1].W,True)
+            elif len(rem_idx)>0:
+                self.deepms_logger.debug('Removing new weights')
+                self.change_weights_at_idx(i,rem_idx,self.deepRL_set[drl_id].layers[-1].W,False)
+
+    def get_pool_data(self):
+        pools = []
+        for drl in self.deepRL_set:
+            pools.append(drl.get_pool_data())
+
+        return pools
+
+    def update_train_distribution(self, t_distribution,drl_id):
+        self.deepRL_set[drl_id].update_train_distribution(t_distribution)
 
     def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
-        all_outs = []
-        for m in self.models:
-            out = m._softmax.get_predictions_func(arc, x, None, batch_size, transformed_x)
-        return all_outs.append(out)
+
+        funcs = []
+        for drl in self.deepRL_set:
+            tmp = drl.get_predictions_func(arc, x, batch_size, transformed_x)
+            funcs.append(tmp)
+        return funcs
+
+    def get_param_values_func(self):
+        params = []
+        for i,layer in enumerate(self.layers[:-1]):
+            params.append([layer.W.get_value(),layer.b.get_value(),layer.b_prime.get_value()])
+
+        multi_softmax = []
+        for layer in self.layers[-1]:
+            multi_softmax.append([layer.W.get_value(),layer.b.get_value(),layer.b_prime.get_value()])
+        params.append(multi_softmax)
+        return params
+
+    def change_weights_at_idx(self, drl_id,nn_idx,drl_W,inc=False):
+
+        new_W = None
+        nnlayer = self.deepRL_set[drl_id].layers[-1]
+        self.deepms_logger.debug("Current size: %s", nnlayer.W.shape)
+        if inc:
+            self.deepms_logger.debug('Got Increment operation')
+            self.deepms_logger.debug('Adding %s weights',len(nn_idx))
+            new_W = np.append(nnlayer.W.get_value(),drl_W.get_value()[nn_idx,:],axis=0)
+        else:
+            sorted_idx = sorted(nn_idx,reverse=True)
+            new_W = nnlayer.W.get_value().copy()
+            for temp_i in sorted_idx:
+                new_W = np.delete(new_W,temp_i,axis=0)
+
+            self.deepms_logger.debug('Got Reduce operation')
+            self.deepms_logger.debug('Remove %s weights',len(nn_idx))
+
+
+        nnlayer.W.set_value(new_W)
+        self.deepms_logger.debug('Shape of new W: %s',nnlayer.W.get_value().shape)
+
+    def check_forward(self,arc, x, y, batch_size, transformed_x = identity):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
+
+        forward_func = theano.function([idx],sym_y,givens={
+            sym_y:y[idx * batch_size : (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1]==0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
+
+    def visualize_nodes(self,learning_rate,iterations,layer_idx,use_scan=False):
+        return self.deepRL_set[0].visualize_nodes(learning_rate,iterations,layer_idx,use_scan)
 
 class MergeIncDAE(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size,num_classes):
+    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size,num_classes,activation):
 
         super(MergeIncDAE,self).__init__(layers, 1, True)
         self._mi_batch_size = mi_batch_size
 
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng)
-        self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations)
-        self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations)
+        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation)
+        self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation)
+        self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation)
 
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error

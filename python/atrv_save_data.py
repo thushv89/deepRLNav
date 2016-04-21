@@ -35,7 +35,7 @@ def callback_cam(msg):
 	    
             mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
             img_mat = img.fromarray(mat)
-            img_mat.thumbnail((72,72))
+            img_mat.thumbnail((84,63))
             img_mat_data = img_mat.getdata()
             # use if you wann check images data coming have correct data (images)
             #sm.imsave('img'+str(1)+'.jpg', np.asarray(num_data,dtype='uint8').reshape(256,-1))
@@ -76,7 +76,7 @@ def callback_laser(msg):
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
     min_range = min(rangesNum)
-    bump_thresh = 0.8
+    bump_thresh = 0.6
     algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
     only_look_ahead = True

@@ -11,9 +11,11 @@ def callback_obstacle_status(msg):
     print("[move_robot_executer] Hit obstacle")
     import os
     import time
-    time.sleep(1)
-    cmd = 'rosnode kill /move_robot_executer'
+    cmd = 'rosservice call /autonomy/path_follower/cancel_request'
     os.system(cmd)
+    time.sleep(1)
+    kill_cmd = 'rosnode kill /move_robot_executer'
+    os.system(kill_cmd)
     
   
 if __name__=='__main__':  
