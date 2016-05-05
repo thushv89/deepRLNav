@@ -158,13 +158,15 @@ def make_model(hparams, restore_data=None,restore_pool=None):
     # restoredata should have layer
     rng = T.shared_randomstreams.RandomStreams(0)
     deeprl_ep = 0
-    global episode,num_bumps,deeprl_episodes
+    global episode,num_bumps,deeprl_episodes,algo_move_count
     global logger
 
     if restore_data is not None:
-        layer_params,init_sizes,rl_q_vals,(ep,nb,deeprl_ep) = restore_data
+        layer_params,init_sizes,rl_q_vals,(ep,nb,deeprl_ep,algo_moves) = restore_data
         episode = ep
         num_bumps = nb
+        algo_move_count = algo_moves
+
         if hparams.model_type == 'DeepRL':
             policies = [RLPolicies.ContinuousState(q_vals=q) for q in rl_q_vals]
             assert len(policies) == len(hparams.hid_sizes)
@@ -296,11 +298,10 @@ def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learni
                 # (1-alpha)*current output + alpha * (0.5 output)
                 use_exp_averaging = False
 
-
-                for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
-                    # if we should go forward #no training though
-                    # we always train from previous batches
-                    if not check_fwd(t_batch):
+                # if we should go forward #no training though
+                # we always train from previous batches
+                for i in range(int(ceil(data_file[2]*1.0 / batch_size))):
+                    if not check_fwd(i):
                         i_bumped = True
                         num_bumps += 1
                         break
@@ -546,7 +547,7 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
 
 def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
     import pickle
-    global episode, num_bumps # number of processed batches
+    global episode, num_bumps, algo_move_count # number of processed batches
     global dir_suffix,logger
 
     lyr_params = []
@@ -610,9 +611,9 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
                   + '_batch' + str(updated_hparam.batch_size) + '_hid' + '-'.join([str(h) for h in updated_hparam.init_sizes])\
                   + '_sim' + str(updated_hparam.sim_thresh)
 
-    pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_Qs,(episode,num_bumps,deeprl_episodes)),
-                open( dir_suffix + os.sep + "params_"+str(num_bumps)+ file_suffix + ".pkl", "wb"))
-    pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(num_bumps)+ file_suffix + '.pkl', 'wb'))
+    pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_Qs,(episode,num_bumps,deeprl_episodes,algo_move_count)),
+                open(dir_suffix + os.sep + "params_"+str(algo_move_count)+ file_suffix + ".pkl", "wb"))
+    pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(algo_move_count)+ file_suffix + '.pkl', 'wb'))
     
 def test(shared_data_file_x,arc,model, model_type):
 
@@ -647,10 +648,10 @@ def test(shared_data_file_x,arc,model, model_type):
         else:
             action = np.random.randint(0,3)
     elif model_type == 'DeepRLMultiSoftmax':
-        random_threshold = 0.9
-        low_rand_threshold = 0.2
-        idx_above_thresh = np.where(probs>random_threshold)[0]
-        is_all_below_low_thresh = np.all(probs<low_rand_threshold)
+        #random_threshold = 0.9
+        rand_threshold = 0.5 * (1.-hyperparam.dropout) * 0.9
+        idx_above_thresh = np.where(probs>rand_threshold)[0]
+        is_all_below_low_thresh = np.all(probs<rand_threshold)
         logger.debug('Indices above random threshold: %s',idx_above_thresh)
         logger.debug('All probas below low rand threshold: %s',is_all_below_low_thresh)
         if len(idx_above_thresh)<=1 and not is_all_below_low_thresh:
@@ -666,14 +667,15 @@ def test(shared_data_file_x,arc,model, model_type):
 fwd_threshold = 0.5
 
 def run(data_file,prev_data_file):
-    global hyperparam,episode,i_bumped,bump_episode,last_action,\
+    global hyperparam,episode,algo_move_count,i_bumped,bump_episode,last_action,\
         fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
-
+    global netsize_logger
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
     logger.info('Bump_episode: %s',bump_episode)
+    logger.info('Number of Moves by the DeepRL: %s',algo_move_count)
     logger.info('Number of bumps: %s \n',num_bumps)
 
     # this part is for the very first action after bumping somewhere
@@ -681,6 +683,9 @@ def run(data_file,prev_data_file):
         last_action = 1
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
         action = test(shared_data_file[0],1,model,hyperparam.model_type)
+
+        algo_move_count += 1
+
     elif data_file[1].shape[0]>0:
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
 
@@ -703,14 +708,21 @@ def run(data_file,prev_data_file):
                 train_multi_softmax(hyperparam.batch_size, shared_data_file, prev_shared_data_file,
                            hyperparam.pre_epochs, hyperparam.finetune_epochs, hyperparam.learning_rate, model, hyperparam.model_type)
 
+            layer_out_size_str = str(episode)+',' + str(algo_move_count)+','
+            for l in model.layers[:-1]:
+                layer_out_size_str += str(l.current_out_size)+','
+
+            netsize_logger.info(layer_out_size_str)
             action = test(shared_data_file[0],1,model,hyperparam.model_type)
+            algo_move_count += 1
 
         elif shared_data_file and shared_data_file[2]>0 and not do_train:
             action = test(shared_data_file[0],1,model,hyperparam.model_type)
+            algo_move_count += 1
 
-        if persist_every>0 and num_bumps>0 and do_train and\
-                        last_persisted!=num_bumps and num_bumps%persist_every==0:
-            logger.info('[run] Persist parameters & Filters: %s',num_bumps)
+        if persist_every>0 and algo_move_count>0 and do_train and\
+                        last_persisted!=algo_move_count and algo_move_count%persist_every==0:
+            logger.info('[run] Persist parameters & Filters: %s',algo_move_count)
             if hyperparam.model_type == 'DeepRL' or hyperparam.model_type == 'DeepRLMultiSoftmax':
                 import copy
                 updated_hparams = copy.copy(hyperparam)
@@ -721,8 +733,8 @@ def run(data_file,prev_data_file):
                 if visualize_filters:
                     for layer_idx in range(len(hyperparam.hid_sizes)):
                         filters = model.visualize_nodes(updated_hparams.learning_rate*2.,75,layer_idx,'sigmoid')
-                        create_image_grid(filters,updated_hparams.aspect_ratio,num_bumps,layer_idx)
-                last_persisted = num_bumps
+                        create_image_grid(filters,updated_hparams.aspect_ratio,algo_move_count,layer_idx)
+                last_persisted = algo_move_count
 
     else:
         logger.warning('Incompatible action received. Sending action 1')
@@ -733,10 +745,10 @@ def run(data_file,prev_data_file):
 
     #logger for number of bumps
 
-    if episode>0 and episode % bump_count_window == 0:
+    if algo_move_count>0 and algo_move_count % bump_count_window == 0:
         logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s',
-                     episode,episode-persist_every,(num_bumps-prev_log_bump_ep))
-        bump_logger.info('%s,%s',episode,(num_bumps-prev_log_bump_ep))
+                     algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep))
+        bump_logger.info('%s,%s',algo_move_count,(num_bumps-prev_log_bump_ep))
         prev_log_bump_ep = num_bumps
 
     episode += 1
@@ -750,6 +762,7 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     from mpl_toolkits.axes_grid1 import ImageGrid
     import matplotlib.cm as cm
     from math import ceil
+    global dir_suffix
     # mutex is used to prevent errors raised by matplotlib (regarding main thread)
 
     filt_w,filt_h = int(ceil(len(filters)**0.5)),int(ceil(len(filters)**0.5))
@@ -763,7 +776,7 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
         grid[i].set_yticklabels([])
         grid[i].imshow(filters[i].reshape(aspect_ratio[1],aspect_ratio[0]), cmap = cm.Greys_r)  # The AxesGrid object work as a list of axes.
 
-    plt.savefig('filters'+str(fig_id)+'-'+str(layer_idx)+'.jpg')
+    plt.savefig(dir_suffix+os.sep+'filters'+str(fig_id)+'-'+str(layer_idx)+'.jpg')
     plt.clf()
     plt.close('all')
 
@@ -833,6 +846,8 @@ action_pub = None
 
 hyperparam = None
 episode=0
+algo_move_count = 0
+
 do_train = 1
 persist_every = 10
 bump_count_window = 25
@@ -848,6 +863,8 @@ logger = logging.getLogger(__name__)
 
 dir_suffix = None
 bump_logger = None
+netsize_logger = None
+param_logger = None
 
 prev_log_bump_ep = 0
 
@@ -963,8 +980,8 @@ if __name__ == '__main__':
         hyperparam.out_size = 3
         hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
-        hyperparam.dropout = 0.2
-        hyperparam.learning_rate = 0.1
+        hyperparam.dropout = 0.
+        hyperparam.learning_rate = 0.05
         hyperparam.batch_size = 5
         hyperparam.epochs = 1
 
@@ -998,8 +1015,37 @@ if __name__ == '__main__':
         os.mkdir(dir_suffix)
     else:
         override_dir = raw_input('Folder already exist. Continue?(Y/N)')
-        if not override_dir=='Y' or override_dir=='y':
+        if not (override_dir == 'Y' or override_dir == 'y'):
             sys.exit(2)
+
+    param_logger = logging.getLogger('ParamLogger')
+    param_logger.setLevel(logging.INFO)
+    param_filename = dir_suffix + os.sep + 'param_log_train.log' if do_train else 'param_log_test' + file_suffix + '.log'
+    param_fh = logging.FileHandler(param_filename)
+    param_fh.setLevel(logging.INFO)
+    param_fh.setFormatter(logging.Formatter())
+    param_logger.addHandler(param_fh)
+
+    param_logger.info('Input size: %s',str(hyperparam.in_size))
+    param_logger.info('Input aspect ratio: %s',hyperparam.aspect_ratio)
+    param_logger.info('Output size: %s',str(hyperparam.out_size))
+    param_logger.info('Model type: %s',hyperparam.model_type)
+    param_logger.info('Activation: %s',hyperparam.activation)
+    param_logger.info('Dropout rate: %s',str(hyperparam.dropout))
+    param_logger.info('Learning rate: %s',str(hyperparam.learning_rate))
+    param_logger.info('Batch size: %s',str(hyperparam.batch_size))
+    param_logger.info('Epochs: %s',str(hyperparam.epochs))
+    param_logger.info('Hidden layers: %s',str(hyperparam.hid_sizes))
+    param_logger.info('Hidden (initial) layers: %s',str(hyperparam.init_sizes))
+    param_logger.info('Corruption level: %s',str(hyperparam.corruption_level))
+    param_logger.info('Lambda: %s',str(hyperparam.lam))
+    param_logger.info('Iterations: %s',str(hyperparam.iterations))
+    param_logger.info('Recent Pool size: %s',str(hyperparam.r_pool_size))
+    param_logger.info('Finetune Pool size: %s',str(hyperparam.ft_pool_size))
+    param_logger.info('Pre epochs: %s',hyperparam.pre_epochs)
+    param_logger.info('Finetune epochs: %s',hyperparam.finetune_epochs)
+    param_logger.info('Similarity threshold: %s',hyperparam.sim_thresh)
+    param_logger.info('Multi softmax: %s',hyperparam.multi_softmax)
 
     bump_logger = logging.getLogger('BumpLogger')
     bump_logger.setLevel(logging.INFO)
@@ -1008,6 +1054,15 @@ if __name__ == '__main__':
     fh.setLevel(logging.INFO)
     fh.setFormatter(logging.Formatter())
     bump_logger.addHandler(fh)
+
+    if do_train:
+        netsize_logger = logging.getLogger('NetSizeLogger')
+        netsize_logger.setLevel(logging.INFO)
+        netsize_filename = dir_suffix + os.sep + 'netsize_log_train.log'
+        fh = logging.FileHandler(netsize_filename)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter())
+        netsize_logger.addHandler(fh)
 
     #batch_count = 5
     #input_avger = InputAverager(batch_count,batch_size,in_size)

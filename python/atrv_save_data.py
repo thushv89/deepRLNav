@@ -9,6 +9,7 @@ from sensor_msgs.msg import Image
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool,Int16
 from rospy_tutorials.msg import Floats
 import numpy as np
@@ -71,7 +72,8 @@ def callback_cam(msg):
 
 def callback_laser(msg):
     global obstacle_msg_sent
-    global currLabels
+    global currLabels,currInputs
+
     rangesTup = msg.ranges
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
@@ -84,7 +86,7 @@ def callback_laser(msg):
         #print(rangesNum)
         labels = [0,0,0]
         obstacle = False
-        for l in rangesNum[45:75]:
+        for l in rangesNum:
             if l < bump_thresh:
                 obstacle = True
         #if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
@@ -95,7 +97,7 @@ def callback_laser(msg):
         #    labels[2] = 0
         if not obstacle:
             labels = [0,1,0]
-        print(labels)            
+        print(labels)
         
         #idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
         # if there are more than one 1 choose one randomly
@@ -113,18 +115,24 @@ def callback_laser(msg):
         else:
             currLabels.append(0)
 
-        if np.min(rangesNum[45:75])<0.3:
-            import time
-            import os
-            for l in range(len(currLabels)):
-                currLabels[l] = 0
-            save_data()
-            time.sleep(0.1)
-            obstacle_status_pub.publish(True)
-            time.sleep(0.5)
-            cmd = 'rosnode kill /save_data_node'
-            os.system(cmd)
-            
+        # middle part of laser [45:75]
+
+        if np.min(rangesNum)<0.3:
+            if not move_complete:
+                import time
+                import os
+                for l in range(len(currLabels)):
+                    currLabels[l] = 0
+                save_data()
+                time.sleep(0.1)
+                obstacle_status_pub.publish(True)
+                time.sleep(0.5)
+                cmd = 'rosnode kill /save_data_node'
+                os.system(cmd)
+            else:
+                currInputs=[]
+                currLabels=[]
+
         print(currLabels)
         print('Laser SUCCESS')    
     
@@ -162,9 +170,26 @@ def callback_odom(msg):
     prevPose = data.pose.pose
 
 def callback_path_finish(msg):
+    from os import system
+    import time
+    global move_complete,isMoving
     if int(msg.data)==1:
         save_data()
-  
+        move_complete = True
+        time.sleep(0.1)
+        if isMoving:
+            cmd = 'rosservice call /autonomy/path_follower/cancel_request'
+            system(cmd)
+            print 'Robot was still moving. Manually killing the path'
+
+def callback_action_status(msg):
+    global move_complete
+    move_complete = False
+
+def callback_cmd_vel(msg):
+    global cmd_vel_buffer
+
+
 def save_data():
     import time    
     
@@ -180,9 +205,12 @@ def save_data():
         data_status_pub.publish(0)
     else:
         data_status_pub.publish(1)
+
     currInputs=[]
     currLabels=[]
     initial_data = False
+
+
 
 isMoving = False
 prevPose = None
@@ -190,6 +218,9 @@ data_status_pub = None
 obstacle_status_pub = None
 obstacle_msg_sent = False
 initial_data = True
+move_complete = False
+cmd_vel_buffer = []
+
 if __name__=='__main__':      
     currInputs = []
     currLabels = []
@@ -205,5 +236,7 @@ if __name__=='__main__':
     rospy.Subscriber("/obs_scan", LaserScan, callback_laser)
     rospy.Subscriber("/odom", Odometry, callback_odom)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
+    rospy.Subscriber("/action_status", Int16, callback_action_status)
+    #rospy.Subscriber("/cmd_vel",Twist, callback_cmd_vel)
     #rate.sleep()
     rospy.spin() # this will block untill you hit Ctrl+C

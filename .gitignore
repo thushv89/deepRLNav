@@ -8,3 +8,8 @@
 *.pkl
 **/devel
 **/build
+*.log
+*.log~
+*.cpp~
+*.launch~
+

@@ -1099,6 +1099,13 @@ class DeepReinforcementLearningModel(Transformer):
             weights /= sum(weights)
             return np.convolve(log, weights)[n-1:-n+1]
 
+        def moving_average_v2(log,n):
+            weights = np.exp(np.linspace(-1, 0, n))
+            weights /= sum(weights)
+            weights_rev = weights[::-1]
+            conv = np.convolve(log,weights_rev)
+            return conv[int(len(conv)/2)]
+
         # get early stopping
         def train_adaptively(batch_id):
             from math import sqrt
@@ -1142,9 +1149,9 @@ class DeepReinforcementLearningModel(Transformer):
             #print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
             data = {
-                'mea_15': moving_average(self._error_log, 15),
-                'mea_10': moving_average(self._error_log, 10),
-                'mea_5': moving_average(self._error_log, 5),
+                'mea_15': moving_average_v2(self._error_log, 15),
+                'mea_10': moving_average_v2(self._error_log, 10),
+                'mea_5': moving_average_v2(self._error_log, 5),
                 'pool_relevant': self.pool_relevant(self._pool,self.train_distribution,batch_size),
                 'initial_size': [l.initial_size[1] for l in self.layers[:-1]],
                 'input_size':self.layers[0].initial_size[0],
@@ -1154,7 +1161,7 @@ class DeepReinforcementLearningModel(Transformer):
                 'curr_error': err_for_layers[-1],
                 'neuron_balance': self._neuron_balance_log[-1],
                 'reconstruction': self._reconstruction_log[-1],
-                'r_15': moving_average(self._reconstruction_log, 15)
+                'r_15': moving_average_v2(self._reconstruction_log, 15)
             }
 
             def merge_increment(func, pool, amount, merge, inc,layer_idx):
@@ -1186,6 +1193,18 @@ class DeepReinforcementLearningModel(Transformer):
                 self._controller[ctrl_i].move(self.episode, data, funcs,ctrl_i)
                 err_for_layers.append(np.asscalar(error_func(batch_id)))
                 data['curr_error'] = err_for_layers[-1]
+                action,change = self._controller[ctrl_i].get_current_action_change()
+                print '%s,%s'%(action,change)
+                if action=="Action.increment":
+                    self.layers[ctrl_i].current_out_size += change
+                    print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                elif action == 'Action.reduce':
+                    self.layers[ctrl_i].current_out_size -= change
+                    print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                elif action=='None' or action == 'Action.pool':
+                    self.layers[ctrl_i].current_out_size += 0
+                else:
+                    raise NotImplementedError
 
             self.deeprl_logger.info("\nTRAINING FOR EPISODE: %s\n",self.episode)
             self.deeprl_logger.debug("Errors for layers: %s", err_for_layers)
@@ -1195,10 +1214,12 @@ class DeepReinforcementLearningModel(Transformer):
                 str_size += " => " + str(l.W.get_value().shape[1])
             self.deeprl_logger.info(str_size+'\n')
 
+
             train_func(batch_id)
 
-            self._network_size_log.append(self.layers[0].W.get_value().shape[1])
+            #self._network_size_log.append(self.layers[0].W.get_value().shape[1])
             self.episode += 1
+
 
         def update_pool(batch_id):
             self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
@@ -1482,6 +1503,7 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
     def visualize_nodes(self,learning_rate,iterations,layer_idx,use_scan=False):
         return self.deepRL_set[0].visualize_nodes(learning_rate,iterations,layer_idx,use_scan)
 
+
 class MergeIncDAE(Transformer):
 
     def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, pool_size,num_classes,activation):
@@ -1616,7 +1638,7 @@ class MergeIncDAE(Transformer):
             # discriminative error optimization
             train_func(batch_id)
 
-            self._network_size_log.append(self.layers[0].W.get_value().shape[1])
+            #self._network_size_log.append(self.layers[0].W.get_value().shape[1])
 
             return self._valid_error_log[-1]
 

@@ -47,7 +47,7 @@ int main(int argc, char* argv[]){
 	double newY = 0;
 	double newYaw = 0;	
 	int stepSize = 2;
-	int stepSize2 = 1.5;
+	int stepSize2 = 1;
 	// |
 	// |
 	// V

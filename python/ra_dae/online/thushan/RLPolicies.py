@@ -40,6 +40,8 @@ class ContinuousState(Controller):
 
         self.prev_state = None
         self.prev_action = None
+        self.prev_change = None
+
         self.prev_time = 0
 
         if q_vals is None:
@@ -86,18 +88,9 @@ class ContinuousState(Controller):
                 funcs['pool'](1)
             return
 
-        #what does this method do?
-        def ma_state(name):
-            retVal = 0
-            if not len(data[name]) < 2:
-                retVal = data[name][-1] - data[name][-2]
-
-            return retVal
-            #return 0 if len(data[name]) < 2 else data[name][-1] - data[name][-2]
-
-        state = (data['r_15'][-1], data['neuron_balance'][layer_idx], ma_state('mea_15'))
+        state = (data['r_15'], data['neuron_balance'][layer_idx], data['mea_15'])
         if verbose:
-            self.rl_logger.debug('Current state %.3f, %.3f, %.3f' % (data['r_5'][-1], data['neuron_balance'][layer_idx], ma_state('mea_15')))
+            self.rl_logger.debug('Current state %.3f, %.3f, %.3f' % (data['r_15'], data['neuron_balance'][layer_idx], data['mea_15']))
 
         err_diff = err_t - err_t_minus_1
         curr_err = err_t
@@ -213,13 +206,17 @@ class ContinuousState(Controller):
             elif action == Action.reduce:
                 # method signature: amount, to_merge, to_inc
                 # introducing division by two to reduce the impact
-                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](data['pool_relevant'], to_move/2., 0,layer_idx)
+                to_move /= 2.
+                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](data['pool_relevant'], to_move, 0,layer_idx)
             elif action == Action.increment:
                 self.add_idx,self.rem_idx = funcs['merge_increment_pool'](data['pool_relevant'], 0, to_move,layer_idx)
 
         self.prev_action = action
         self.prev_state = state
+        self.prev_change = int(to_move*data['initial_size'][layer_idx])
 
+    def get_current_action_change(self):
+        return str(self.prev_action),self.prev_change
 
     def get_Q(self):
         return self.q
