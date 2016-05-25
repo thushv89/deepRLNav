@@ -191,9 +191,7 @@ def make_model(hparams, restore_data=None,restore_pool=None):
         layers = make_layers(hparams)
 
     if hparams.model_type == 'DeepRL':
-        model = DLModels.DeepReinforcementLearningModel(
-            layers, hparams.corruption_level, rng, hparams.iterations, hparams.lam, hparams.batch_size,
-            hparams.r_pool_size, hparams.ft_pool_size, policies,hparams.sim_thresh,hparams.out_size,activation=hparams.activation,dropout=hparams.dropout)
+        model = DLModels.DeepReinforcementLearningModel(layers, rng, policies, hparams, hparams.out_size)
         model.set_research_params(pool_with_not_bump=pool_with_not_bump,test_mode=False)
 
         if restore_pool is not None:
@@ -209,9 +207,7 @@ def make_model(hparams, restore_data=None,restore_pool=None):
 
     elif hparams.model_type == 'DeepRLMultiSoftmax':
         logger.info("CREATING DEEPRL MULTI SOFTMAX NET ...\n")
-        model = DLModels.DeepReinforcementLearningModelMultiSoftmax(
-            layers, hparams.corruption_level, rng, hparams.iterations, hparams.lam, hparams.batch_size,
-            hparams.r_pool_size, hparams.ft_pool_size, policies,hparams.sim_thresh,hparams.out_size,activation=hparams.activation,dropout=hparams.dropout)
+        model = DLModels.DeepReinforcementLearningModelMultiSoftmax(layers, rng, policies, hparams, hparams.out_size)
 
         if restore_pool is not None:
             X,Y,DX,DY = [],[],[],[]
@@ -878,7 +874,7 @@ class HyperParams(object):
         self.aspect_ratio = [] #w,h
         self.out_size = -1
         self.model_type = None
-        self.activation = 'softplus' #relu/sigmoid/softplus
+        self.activation = 'sigmoid' #relu/sigmoid/softplus
         self.learning_rate = -1
         self.batch_size = -1
         self.epochs = -1
@@ -893,6 +889,7 @@ class HyperParams(object):
         self.sim_thresh = -1
         self.multi_softmax = False
         self.dropout = 0
+        self.action_frequency = 5
 
     def print_hyperparams(self):
         global logger
@@ -998,6 +995,7 @@ if __name__ == '__main__':
         hyperparam.finetune_epochs = 1
         hyperparam.sim_thresh = 0.94
         hyperparam.multi_softmax = True
+        hyperparam.action_frequency = 5
 
         hyperparam.print_hyperparams()
         model = make_model(hyperparam,restore_data=None,restore_pool=None)

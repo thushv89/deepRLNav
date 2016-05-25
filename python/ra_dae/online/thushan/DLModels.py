@@ -856,9 +856,10 @@ class CombinedObjective(Transformer):
     def get_predictions_func(self, arc, x,y, batch_size, transformed_x = identity):
         return self._softmax.get_predictions_func(arc, x, y, batch_size, transformed_x)
 
+from Train import HyperParams
 class DeepReinforcementLearningModel(Transformer):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, r_pool_size, ft_pool_size, controller,simi_thresh, num_classes, activation, dropout):
+    def __init__(self, layers, rng, controller, hparam, num_classes):
 
         self.deeprl_logger = logging.getLogger('DeepRL'+str(random.randint(0,1000)))
         self.deeprl_logger.setLevel(logging_level)
@@ -867,25 +868,25 @@ class DeepReinforcementLearningModel(Transformer):
         console.setLevel(logging_level)
         self.deeprl_logger.addHandler(console)
 
-        super(DeepReinforcementLearningModel,self).__init__(layers, 1, activation=activation,logger=self.deeprl_logger)
+        super(DeepReinforcementLearningModel,self).__init__(layers, 1, activation=hparam.activation,logger=self.deeprl_logger)
 
-        self._mi_batch_size = mi_batch_size
+        self._mi_batch_size = hparam.batch_size
         self._controller = controller
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation,dropout=dropout)
-        self._softmax = CombinedObjective(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation,dropout=dropout)
-        self._merge_increment = MergeIncrementingAutoencoder(layers, corruption_level, rng, lam=lam, iterations=iterations, activation=activation,dropout=dropout)
+        self._autoencoder = DeepAutoencoder(layers[:-1], hparam.corruption_level, rng, activation=hparam.activation,dropout=hparam.dropout)
+        self._softmax = CombinedObjective(layers, hparam.corruption_level, rng, lam=hparam.lam, iterations=hparam.iterations, activation=hparam.activation, dropout=hparam.dropout)
+        self._merge_increment = MergeIncrementingAutoencoder(layers, hparam.corruption_level, rng, lam=hparam.lam, iterations=hparam.iterations, activation=hparam.activation,dropout=hparam.dropout)
 
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
-        self._pool = Pool(layers[0].initial_size[0], r_pool_size,num_classes)
-        self._hard_pool = Pool(layers[0].initial_size[0], r_pool_size,num_classes)
-        self._diff_pool = Pool(layers[0].initial_size[0], ft_pool_size,num_classes)
+        self._pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
+        self._hard_pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
+        self._diff_pool = Pool(layers[0].initial_size[0], hparam.ft_pool_size,num_classes)
 
         self._rng = rng
-        self.corruption_levels = corruption_level
-        self.iterations = iterations
-        self.lam = lam
-        self.simi_thresh = simi_thresh
+        self.corruption_levels = hparam.corruption_level
+        self.iterations = hparam.iterations
+        self.lam = hparam.lam
+        self.simi_thresh = hparam.sim_thresh
         self.train_distribution = []
         self.pool_distribution = []
         self.num_classes = num_classes
@@ -903,6 +904,9 @@ class DeepReinforcementLearningModel(Transformer):
         self.pool_with_not_bump = True
         self.single_node_softmax = False
         self.test_mode = False
+
+        self.action_frequency = hparam.action_frequency
+        self.action_iteration = 0
 
     def set_research_params(self,**params):
         self.deeprl_logger.debug('RETRIEVING RESEARCH PARAMETERS\n')
@@ -1176,35 +1180,41 @@ class DeepReinforcementLearningModel(Transformer):
                 add_idx,rem_idx = func(pool.as_size(int(pool.size * amount), self._mi_batch_size), merge, inc, layer_idx)
                 return add_idx,rem_idx
 
-
-            funcs = {
-                'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._pool),
-                'merge_increment_hard_pool': functools.partial(merge_increment, merge_inc_func_hard_pool, self._hard_pool),
-                'pool': functools.partial(train_pool, self._pool, train_func_pool),
-                'pool_finetune':functools.partial(train_pool, self._diff_pool, train_func_diff_pool),
-                'hard_pool': functools.partial(train_pool, self._hard_pool, train_func_hard_pool),
-                'hard_pool_clear': self._hard_pool.clear,
-            }
-
             #this is where reinforcement learning comes to play
+            if self.episode%self.action_frequency==0:
 
-            for ctrl_i in range(len(self._controller)):
+                funcs = {
+                    'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._pool),
+                    'merge_increment_hard_pool': functools.partial(merge_increment, merge_inc_func_hard_pool, self._hard_pool),
+                    'pool': functools.partial(train_pool, self._pool, train_func_pool),
+                    'pool_finetune':functools.partial(train_pool, self._diff_pool, train_func_diff_pool),
+                    'hard_pool': functools.partial(train_pool, self._hard_pool, train_func_hard_pool),
+                    'hard_pool_clear': self._hard_pool.clear,
+                }
 
-                self._controller[ctrl_i].move(self.episode, data, funcs,ctrl_i)
-                err_for_layers.append(np.asscalar(error_func(batch_id)))
-                data['curr_error'] = err_for_layers[-1]
-                action,change = self._controller[ctrl_i].get_current_action_change()
-                print '%s,%s'%(action,change)
-                if action=="Action.increment":
-                    self.layers[ctrl_i].current_out_size += change
-                    print "new size current out size %s" %self.layers[ctrl_i].current_out_size
-                elif action == 'Action.reduce':
-                    self.layers[ctrl_i].current_out_size -= change
-                    print "new size current out size %s" %self.layers[ctrl_i].current_out_size
-                elif action=='None' or action == 'Action.pool':
-                    self.layers[ctrl_i].current_out_size += 0
-                else:
-                    raise NotImplementedError
+                for ctrl_i in range(len(self._controller)):
+
+                    self._controller[ctrl_i].move(self.action_iteration, data, funcs, ctrl_i)
+                    err_for_layers.append(np.asscalar(valid_error_func(batch_id)))
+
+                    #update 'curr_error'
+                    data['curr_error'] = err_for_layers[-1]
+
+                    action,change = self._controller[ctrl_i].get_current_action_change()
+                    print '%s,%s'%(action,change)
+                    if action=="Action.increment":
+                        self.layers[ctrl_i].current_out_size += change
+                        print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                    elif action == 'Action.reduce':
+                        self.layers[ctrl_i].current_out_size -= change
+                        print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                    elif action=='None' or action == 'Action.pool':
+                        self.layers[ctrl_i].current_out_size += 0
+                    else:
+                        raise NotImplementedError
+
+                self.action_iteration += 1
+
 
             self.deeprl_logger.info("\nTRAINING FOR EPISODE: %s\n",self.episode)
             self.deeprl_logger.debug("Errors for layers: %s", err_for_layers)
@@ -1316,7 +1326,7 @@ class DeepReinforcementLearningModel(Transformer):
 
 class DeepReinforcementLearningModelMultiSoftmax(object):
 
-    def __init__(self, layers, corruption_level, rng, iterations, lam, mi_batch_size, r_pool_size, ft_pool_size, controller,simi_thresh, num_classes, activation,dropout):
+    def __init__(self, layers, rng, controller,hparam, num_classes):
 
         self.deepms_logger = logging.getLogger('DeepRLMultiSoftmax')
         self.deepms_logger.setLevel(logging_level)
@@ -1328,16 +1338,16 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
         #super(DeepReinforcementLearningModelMultiSoftmax,self).__init__(layers, 1, self.deepms_logger)
 
         #self.layers = layers
-        self._mi_batch_size = mi_batch_size
+        self._mi_batch_size = hparam.batch_size
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
 
         self.layers = layers
         self._rng = rng
-        self.corruption_levels = corruption_level
-        self.iterations = iterations
-        self.lam = lam
-        self.simi_thresh = simi_thresh
+        self.corruption_levels = hparam.corruption_level
+        self.iterations = hparam.iterations
+        self.lam = hparam.lam
+        self.simi_thresh = hparam.sim_thresh
         self.train_distribution = []
         self.pool_distribution = []
         self.num_classes = num_classes
@@ -1346,7 +1356,7 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
         self._reconstruction_log = []
         self._neuron_balance_log = []
         self._network_size_log = []
-        self.dropout = dropout
+        self.dropout = hparam.dropout
         self.neuron_balance = [1 for _ in range(len(layers[:-1]))]
 
         self._controller = controller
@@ -1372,9 +1382,7 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
             multi_softmax_layers.append(layers[-1][n])
             self.deepRL_set.append(
                 DeepReinforcementLearningModel(
-                    multi_softmax_layers,self.corruption_levels,self._rng,self.iterations,
-                    self.lam,self._mi_batch_size,r_pool_size,ft_pool_size,controller[n],
-                    simi_thresh,1,activation=activation,dropout=dropout
+                    multi_softmax_layers,self._rng,controller[n],hparam,1
                 )
             )
             self.deepRL_set[-1].set_research_params(pool_with_not_bump=False,single_node_softmax=True,test_mode=False)
@@ -1420,17 +1428,21 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
         self.deepms_logger.debug('Retrieving nodes added/removed from DeepRL %s',drl_id)
         add_idx,rem_idx = self.deepRL_set[drl_id]._controller[-1].add_idx, self.deepRL_set[drl_id]._controller[-1].rem_idx
 
-        drl_indices = [a for a in range(self.num_classes)]
-        del drl_indices[drl_id]
+        if add_idx>0 or rem_idx>0:
+            drl_indices = [a for a in range(self.num_classes)]
+            del drl_indices[drl_id]
 
-        for i in drl_indices:
-            self.deepms_logger.debug('Rectifying softmax layer of deepRL %s, (Add/Rem) Sizes %s/%s',i,len(add_idx),len(rem_idx))
-            if len(add_idx)>0:
-                self.deepms_logger.debug('Adding new weights')
-                self.change_weights_at_idx(i,add_idx,self.deepRL_set[drl_id].layers[-1].W,True)
-            elif len(rem_idx)>0:
-                self.deepms_logger.debug('Removing new weights')
-                self.change_weights_at_idx(i,rem_idx,self.deepRL_set[drl_id].layers[-1].W,False)
+            for i in drl_indices:
+                self.deepms_logger.debug('Rectifying softmax layer of deepRL %s, (Add/Rem) Sizes %s/%s',i,len(add_idx),len(rem_idx))
+                if len(add_idx)>0:
+                    self.deepms_logger.debug('Adding new weights')
+                    self.change_weights_at_idx(i,add_idx,self.deepRL_set[drl_id].layers[-1].W,True)
+                elif len(rem_idx)>0:
+                    self.deepms_logger.debug('Removing new weights')
+                    self.change_weights_at_idx(i,rem_idx,self.deepRL_set[drl_id].layers[-1].W,False)
+
+        #reset the add_idx,rem_idx of RLPolicy else if action_frequency>1 might cause problems
+        self.deepRL_set[drl_id]._controller[-1].add_idx, self.deepRL_set[drl_id]._controller[-1].rem_idx=0,0
 
     def get_pool_data(self):
         pools = []

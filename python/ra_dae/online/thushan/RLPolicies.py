@@ -72,8 +72,8 @@ class ContinuousState(Controller):
 
         verbose = True
         pooling = True
-        q_calc_thresh = 15
-        even_chose_thresh = 45
+        q_calc_thresh = 5 #was 15
+        even_chose_thresh = 30 #was 45
         balance_thresh = 25
         gp_fit_frequency = 10
 
