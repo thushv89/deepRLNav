@@ -10,6 +10,7 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose
 from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Vector3
 from std_msgs.msg import Bool,Int16
 from rospy_tutorials.msg import Floats
 import numpy as np
@@ -20,8 +21,10 @@ import sys
 import scipy.misc as sm
 
 def callback_cam(msg):
-    if isMoving:
+    global reversing
+    if isMoving and not reversing:
         global currInputs
+
         data = msg.data
         
         rows = int(msg.height)
@@ -65,49 +68,36 @@ def callback_cam(msg):
             print('num data',len(num_data))
                      
         currInputs.append(list(img_mat_data))
-        
-        
-        print('IMG SUCCESS')
-    
+
 
 def callback_laser(msg):
     global obstacle_msg_sent
     global currLabels,currInputs
+    global reversing,isMoving
 
     rangesTup = msg.ranges
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
-    min_range = min(rangesNum)
-    bump_thresh = 0.6
+    #print "%.3f,%s" % (np.min(rangesNum),np.argmin(rangesNum))
+
+    bump_thresh_1 = 0.6
+    bump_thresh_0_2 = 0.75
     algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
+
     only_look_ahead = True
-    if isMoving:
+    if isMoving and not reversing:
         #print(rangesNum)
         labels = [0,0,0]
         obstacle = False
-        for l in rangesNum:
-            if l < bump_thresh:
-                obstacle = True
-        #if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[0:15]):
-        #    labels[0] = 0
-        #if (l<bump_thresh for l in rangesNum[45:75]):
-        #    labels[1] = 1
-        #if only_look_ahead or (l>bump_thresh/2 for l in rangesNum[105:120]):
-        #    labels[2] = 0
+
+        if np.min(rangesNum[45:75])<bump_thresh_1 or np.min(rangesNum[0:45])<bump_thresh_0_2 or np.min(rangesNum[75:])<bump_thresh_0_2:
+            print "Obstacle set to True\n"
+            obstacle = True
+
         if not obstacle:
             labels = [0,1,0]
-        print(labels)
         
-        #idx_of_1 = [i for i,val in enumerate(labels) if val==1] #indexes which has 1 as value
-        # if there are more than one 1 choose one randomly
-        #while(len(idx_of_1)>=2):
-        #    idx_of_1 = [i for i,val in enumerate(labels) if val==1]
-        #    import random
-        #    rand_idx = random.randint(0,len(idx_of_1)-1)
-        #    labels[idx_of_1[rand_idx]]=0.0
-        #    del idx_of_1[rand_idx]
-
         # if there is a one in labels
         if(1 in labels):
             currLabels.append(1)
@@ -116,9 +106,9 @@ def callback_laser(msg):
             currLabels.append(0)
 
         # middle part of laser [45:75]
-
-        if np.min(rangesNum)<0.3:
+        if np.min(rangesNum[45:75])<bump_thresh_1 or np.min(rangesNum[0:45])<bump_thresh_0_2 or np.min(rangesNum[75:])<bump_thresh_0_2:
             if not move_complete:
+                print "Was still moving and bumped\n"
                 import time
                 import os
                 for l in range(len(currLabels)):
@@ -126,54 +116,84 @@ def callback_laser(msg):
                 save_data()
                 time.sleep(0.1)
                 obstacle_status_pub.publish(True)
-                time.sleep(0.5)
-                cmd = 'rosnode kill /save_data_node'
-                os.system(cmd)
+                time.sleep(0.1)
+                isMoving = False
+                reverse_robot()
+
             else:
                 currInputs=[]
                 currLabels=[]
 
         print(currLabels)
-        print('Laser SUCCESS')    
     
+def reverse_robot():
+    print "Reversing Robot\n"
+    import time
+    global vel_lin_buffer,vel_ang_buffer,reversing
+    global cmd_vel_pub,restored_bump_pub
+    reversing = True
+    for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
+        lin_vec = Vector3(-l[0],-l[1],-l[2])
+        ang_vec = Vector3(-a[0],-a[1],-a[2])
+        time.sleep(0.1)
+        twist_msg = Twist()
+        twist_msg.linear = lin_vec
+        twist_msg.angular = ang_vec
+        cmd_vel_pub.publish(twist_msg)
 
+    for _ in range(10):
+        time.sleep(0.05)
+        twist_msg = Twist()
+        twist_msg.linear = Vector3(0,0,0)
+        twist_msg.angular = Vector3(0,0,0)
+
+        cmd_vel_pub.publish(twist_msg)
+    reversing = False
+    restored_bump_pub.publish(True)
+
+
+# we use this call back to detect the first ever move after termination of move_exec_robot script
+# after that we use callback_action_status
+# the reason to prefer callback_action_status is that we can make small adjustments to robots pose without adding data
 def callback_odom(msg):
     global prevPose
-    global isMoving
-    data = msg
-    pose = data.pose.pose # has position and orientation
-    
-    x = float(pose.position.x)
-    prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
-    y = float(pose.position.y)
-    prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
-    z = float(pose.position.z)
-    prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
-    
-    xo = float(pose.orientation.x)
-    prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
-    yo = float(pose.orientation.y)
-    prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
-    zo = float(pose.orientation.z)
-    prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
-    wo = float(pose.orientation.w)
-    prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
-    
-    tolerance = 0.001
-    if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance 
-       and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
-        isMoving = False
-    else:
-        isMoving = True
-    
-    #print("Moving status: ",isMoving)
-    prevPose = data.pose.pose
+    global isMoving,initial_data
+
+    if initial_data:
+        data = msg
+        pose = data.pose.pose # has position and orientation
+
+        x = float(pose.position.x)
+        prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
+        y = float(pose.position.y)
+        prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
+        z = float(pose.position.z)
+        prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
+
+        xo = float(pose.orientation.x)
+        prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
+        yo = float(pose.orientation.y)
+        prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
+        zo = float(pose.orientation.z)
+        prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
+        wo = float(pose.orientation.w)
+        prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
+
+        tolerance = 0.001
+        if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance
+           and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
+            isMoving = False
+        else:
+            isMoving = True
+
+        prevPose = data.pose.pose
 
 def callback_path_finish(msg):
     from os import system
     import time
     global move_complete,isMoving
     if int(msg.data)==1:
+        print "saving data...\n"
         save_data()
         move_complete = True
         time.sleep(0.1)
@@ -181,14 +201,23 @@ def callback_path_finish(msg):
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
             print 'Robot was still moving. Manually killing the path'
+        isMoving = False
 
 def callback_action_status(msg):
-    global move_complete
+    global isMoving, move_complete
+    global vel_lin_buffer,vel_ang_buffer
     move_complete = False
+    isMoving = True
+    #empty both velocity buffers
+    vel_lin_buffer,vel_ang_buffer=[],[]
 
 def callback_cmd_vel(msg):
-    global cmd_vel_buffer
-
+    global vel_lin_buffer,vel_ang_buffer,isMoving
+    if isMoving:
+        lin_vec = msg.linear #Vector3 object
+        ang_vec = msg.angular
+        vel_lin_buffer.append([lin_vec.x,lin_vec.y,lin_vec.z])
+        vel_ang_buffer.append([ang_vec.x,ang_vec.y,ang_vec.z])
 
 def save_data():
     import time    
@@ -196,8 +225,6 @@ def save_data():
     global currInputs,currLabels,initial_data
     global data_status_pub,sent_input_pub,sent_label_pub
 
-    #print("Input size: ",np.asarray(currInputs,dtype=np.float32).shape)
-    #print("Label size: ",np.asarray(currLabels,dtype=np.float32).shape)
     sent_input_pub.publish(np.asarray(currInputs,dtype=np.float32).reshape((-1,1)))
     sent_label_pub.publish(np.asarray(currLabels,dtype=np.float32).reshape((-1,1)))
     time.sleep(0.1)
@@ -211,15 +238,21 @@ def save_data():
     initial_data = False
 
 
-
+reversing = False
 isMoving = False
+got_action = False
+initial_data = True
+move_complete = False
+
 prevPose = None
 data_status_pub = None
 obstacle_status_pub = None
+cmd_vel_pub = None
+restored_bump_pub = None
 obstacle_msg_sent = False
-initial_data = True
-move_complete = False
-cmd_vel_buffer = []
+
+vel_lin_buffer = []
+vel_ang_buffer = []
 
 if __name__=='__main__':      
     currInputs = []
@@ -231,12 +264,15 @@ if __name__=='__main__':
     sent_input_pub = rospy.Publisher('data_inputs', numpy_msg(Floats), queue_size=10)
     sent_label_pub = rospy.Publisher('data_labels', numpy_msg(Floats), queue_size=10)
     obstacle_status_pub = rospy.Publisher('obstacle_status',Bool, queue_size=10)
-    
+    cmd_vel_pub = rospy.Publisher('cmd_vel',Twist,queue_size=10)
+    restored_bump_pub = rospy.Publisher('restored_bump',Bool, queue_size=10)
+
     rospy.Subscriber("/camera/image", Image, callback_cam)
     rospy.Subscriber("/obs_scan", LaserScan, callback_laser)
     rospy.Subscriber("/odom", Odometry, callback_odom)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
     rospy.Subscriber("/action_status", Int16, callback_action_status)
-    #rospy.Subscriber("/cmd_vel",Twist, callback_cmd_vel)
+    rospy.Subscriber('/cmd_vel',Twist,callback_cmd_vel)
+
     #rate.sleep()
     rospy.spin() # this will block untill you hit Ctrl+C

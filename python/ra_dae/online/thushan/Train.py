@@ -667,6 +667,7 @@ def run(data_file,prev_data_file):
         fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
+    global initial_run
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
@@ -674,14 +675,17 @@ def run(data_file,prev_data_file):
     logger.info('Number of Moves by the DeepRL: %s',algo_move_count)
     logger.info('Number of bumps: %s \n',num_bumps)
 
-    # this part is for the very first action after bumping somewhere
-    if data_file[1].shape[0]>0 and episode-1 == bump_episode:
+    # and after restarting both atrv_save_data and move_exec_robot
+    if data_file[1].shape[0]>0 and initial_run:
+        logger.debug('Very first run after Termination\n')
         last_action = 1
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
         action = test(shared_data_file[0],1,model,hyperparam.model_type)
 
         algo_move_count += 1
+        initial_run = False
 
+    # any other run
     elif data_file[1].shape[0]>0:
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
 
@@ -709,7 +713,15 @@ def run(data_file,prev_data_file):
                 layer_out_size_str += str(l.current_out_size)+','
 
             netsize_logger.info(layer_out_size_str)
-            action = test(shared_data_file[0],1,model,hyperparam.model_type)
+            # if i_bumped, current data has the part that went ahead and bumped (we discard this data)
+            # if i_bumped, we need to get the prediction with previous data instead of feeding current data
+            if not i_bumped:
+                logger.info('Did not bump, so predicting with current data\n')
+                action = test(shared_data_file[0],1,model,hyperparam.model_type)
+            else:
+                logger.info('Bumped, so predicting with previous data\n')
+                action = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
+
             algo_move_count += 1
 
         elif shared_data_file and shared_data_file[2]>0 and not do_train:
@@ -748,7 +760,26 @@ def run(data_file,prev_data_file):
         prev_log_bump_ep = num_bumps
 
     episode += 1
-    action_pub.publish(action)
+
+    global  hit_obstacle,reversed
+    if not hit_obstacle:
+        logger.debug('Did not hit an obstacle. Executing action\n')
+        action_pub.publish(action)
+    else:
+        logger.debug('Hit an obstacle. Waiting for reverse to complete')
+        temp_i = 0
+        while (not reversed) and temp_i<100:
+            True
+            time.sleep(0.1)
+            temp_i += 1
+        logger.debug('Reverse done. Executing action\n')
+
+        # we publish the action only if we recieved reserved signal
+        # we do not publish if the while loop terminated of timeout
+        if temp_i<100:
+            action_pub.publish(action)
+
+
 
 
 def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
@@ -779,9 +810,20 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
 prev_data = None
 bump_episode = -1
 
+import scipy.misc
+def save_images_curr_prev(prev,curr):
+    global episode
+    global hyperparam
+    prev_mat = np.reshape(prev,tuple(hyperparam.aspect_ratio[::-1]))
+    curr_mat = np.reshape(curr,tuple(hyperparam.aspect_ratio[::-1]))
+    scipy.misc.imsave('Images'+os.sep+'img'+str(episode)+'_1.jpg', prev_mat)
+    scipy.misc.imsave('Images'+os.sep+'img'+str(episode)+'_2.jpg', curr_mat)
+
 def callback_data_save_status(msg):
 
     global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode,run_mutex
+    global hit_obstacle,reversed
+    global save_images
 
     initial_data = int(msg.data)
     logger.info('Data Received ...')
@@ -800,20 +842,26 @@ def callback_data_save_status(msg):
     # for the 1st iteration
     if i_bumped or initial_data==0:
         logger.info("Initial run after the break!")
-        prev_data = None
+        #prev_data = None
         bump_episode = episode-1
         i_bumped = False
 
     if prev_data is not None:
-        logger.info('prevdata: %s, %s',prev_data[0].shape,prev_data[1].shape)
+        logger.info('prevdata: %s, %s\n',prev_data[0].shape,prev_data[1].shape)
 
     logger.info('currdata (after): %s, %s',data_inputs.shape,data_labels.shape)
 
     if data_inputs.shape[0]>0 and data_labels.shape[0]>0:
+        if save_images and (data_inputs is not None) and (prev_data is not None):
+                logger.debug('Saving last image of previous and current image batches\n')
+                save_images_curr_prev(prev_data[0][-1],data_inputs[-1])
         try:
             run_mutex.acquire()
             run([data_inputs,data_labels],prev_data)
-            prev_data = [data_inputs,data_labels]
+            if not hit_obstacle:
+                prev_data = [data_inputs,data_labels]
+            hit_obstacle = False
+            reversed = False
         finally:
             run_mutex.release()
     else:
@@ -836,6 +884,23 @@ def callback_data_labels(msg):
     data_labels = np.asarray(msg.data,dtype=np.int32).reshape((-1,))
     logger.info('Recieved. Label size: %s',data_labels.shape)
 
+def callback_restored_bump(msg):
+    global last_action,action_pub
+    global episode,algo_move_count
+    global reversed
+    reversed = True
+    #episode += 1
+    #algo_move_count += 1
+    #action_pub.publish(last_action)
+
+def callback_obstacle_status(msg):
+    global  hit_obstacle
+    hit_obstacle = True
+
+def callback_initial_run(msg):
+    global  initial_run
+    initial_run = True
+
 data_inputs = None
 data_labels = None
 action_pub = None
@@ -853,7 +918,11 @@ last_persisted = 0
 # if False, we use i_bumped instances to add to pool
 pool_with_not_bump = True
 visualize_filters = True
+save_images = False
 
+hit_obstacle = False
+reversed = False
+initial_run = False
 
 logger = logging.getLogger(__name__)
 
@@ -978,18 +1047,18 @@ if __name__ == '__main__':
         hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.05
+        hyperparam.learning_rate = 0.01
         hyperparam.batch_size = 5
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [32,32]
+        hyperparam.hid_sizes = [32]
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
         hyperparam.corruption_level = 0.15
         hyperparam.lam = 0.1
         hyperparam.iterations = 5
-        hyperparam.r_pool_size = 25
+        hyperparam.r_pool_size = 50
         hyperparam.ft_pool_size = 100
         hyperparam.pre_epochs = 5
         hyperparam.finetune_epochs = 1
@@ -1015,6 +1084,9 @@ if __name__ == '__main__':
         override_dir = raw_input('Folder already exist. Continue?(Y/N)')
         if not (override_dir == 'Y' or override_dir == 'y'):
             sys.exit(2)
+
+    if not os.path.exists('Images'):
+        os.mkdir('Images')
 
     param_logger = logging.getLogger('ParamLogger')
     param_logger.setLevel(logging.INFO)
@@ -1075,7 +1147,9 @@ if __name__ == '__main__':
     rospy.Subscriber("/data_sent_status", Int16, callback_data_save_status)
     rospy.Subscriber("/data_inputs", numpy_msg(Floats), callback_data_inputs)
     rospy.Subscriber("/data_labels", numpy_msg(Floats), callback_data_labels)
-
+    rospy.Subscriber("/restored_bump",Bool,callback_restored_bump)
+    rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)
+    rospy.Subscriber("/initial_run",Bool,callback_initial_run)
     rospy.spin()
 
 
