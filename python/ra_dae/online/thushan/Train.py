@@ -1041,13 +1041,13 @@ if __name__ == '__main__':
 
         model = make_model(hyperparam,restore_data=restore_model,restore_pool=restore_pool)
     else:
-        hyperparam.in_size = 5292
-        hyperparam.aspect_ratio = [84,63]
+        hyperparam.in_size = 7424
+        hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.01
+        hyperparam.learning_rate = 0.02
         hyperparam.batch_size = 5
         hyperparam.epochs = 1
 

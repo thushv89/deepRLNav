@@ -39,12 +39,26 @@ def callback_cam(msg):
 	    
             mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
             img_mat = img.fromarray(mat)
-            img_mat.thumbnail((84,63))
+            img_mat.thumbnail((thumbnail_w,thumbnail_h))
             img_mat_data = img_mat.getdata()
-            # use if you wann check images data coming have correct data (images)
-            #sm.imsave('img'+str(1)+'.jpg', np.asarray(num_data,dtype='uint8').reshape(256,-1))
-            #m.imsave('avg_img'+str(1)+'.jpg', np.asarray(list(img_mat_data)).reshape(64,-1))
 
+            vertical_cut_threshold = int(thumbnail_h/5.)
+
+            img_preprocessed = np.reshape(np.asarray(list(img_mat_data)),(thumbnail_h,thumbnail_w))
+            # use if you wann check images data coming have correct data
+            #sm.imsave('img'+str(1)+'.jpg', img_data_reshape)
+
+            img_preprocessed = np.delete(img_preprocessed,np.s_[:vertical_cut_threshold],0)
+            img_preprocessed = np.delete(img_preprocessed,np.s_[-vertical_cut_threshold:],0)
+
+
+            # use if you wann check images data coming have correct data (image cropped resized)
+            '''sm.imsave('avg_img'+str(1)+'.jpg', np.reshape(img_data_reshape,
+                                                          (int(thumbnail_h-2*vertical_cut_threshold),-1))
+                      )'''
+            img_preprocessed.flatten()
+
+        # for CNN
         else:
             data_r = []
             data_g = []
@@ -67,7 +81,7 @@ def callback_cam(msg):
             img_mat_data = num_data
             print('num data',len(num_data))
                      
-        currInputs.append(list(img_mat_data))
+        currInputs.append(list(img_preprocessed))
 
 
 def callback_laser(msg):
@@ -80,8 +94,8 @@ def callback_laser(msg):
     rangesNum.reverse()
     #print "%.3f,%s" % (np.min(rangesNum),np.argmin(rangesNum))
 
-    bump_thresh_1 = 0.6
-    bump_thresh_0_2 = 0.75
+    bump_thresh_1 = 0.5
+    bump_thresh_0_2 = 0.65
     algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
 
@@ -237,6 +251,8 @@ def save_data():
     currLabels=[]
     initial_data = False
 
+thumbnail_w = 128
+thumbnail_h = 96
 
 reversing = False
 isMoving = False
