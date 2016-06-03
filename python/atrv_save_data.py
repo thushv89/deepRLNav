@@ -19,9 +19,16 @@ import math
 from rospy.numpy_msg import numpy_msg
 import sys
 import scipy.misc as sm
+import utils
 
 def callback_cam(msg):
     global reversing
+    global cam_skip,cam_count
+
+    cam_count += 1
+    if cam_count%cam_skip != 0:
+        return
+
     if isMoving and not reversing:
         global currInputs
 
@@ -29,7 +36,7 @@ def callback_cam(msg):
         
         rows = int(msg.height)
         cols = int(msg.width)
-        print('h',rows,'w',cols)
+
         num_data = []
         
         isAutoencoder = True
@@ -82,20 +89,26 @@ def callback_cam(msg):
             print('num data',len(num_data))
                      
         currInputs.append(list(img_preprocessed))
-
+        print 'Cam data length: %s'%len(currInputs)
 
 def callback_laser(msg):
     global obstacle_msg_sent
     global currLabels,currInputs
     global reversing,isMoving
+    global laser_range_0,laser_range_1,laser_range_2
+    global laser_skip,laser_count
+
+    laser_count += 1
+    if laser_count % laser_skip != 0:
+        return
 
     rangesTup = msg.ranges
     rangesNum = [float(r) for r in rangesTup]
     rangesNum.reverse()
-    #print "%.3f,%s" % (np.min(rangesNum),np.argmin(rangesNum))
 
-    bump_thresh_1 = 0.5
-    bump_thresh_0_2 = 0.65
+    bump_thresh_1 = utils.BUMP_1_THRESH
+    bump_thresh_0_2 = utils.BUMP_02_THRESH
+
     algo  = 'DeepRLMultiLogreg'
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
 
@@ -105,7 +118,9 @@ def callback_laser(msg):
         labels = [0,0,0]
         obstacle = False
 
-        if np.min(rangesNum[45:75])<bump_thresh_1 or np.min(rangesNum[0:45])<bump_thresh_0_2 or np.min(rangesNum[75:])<bump_thresh_0_2:
+        if np.min(rangesNum[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
+                        np.min(rangesNum[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
+                        np.min(rangesNum[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             print "Obstacle set to True\n"
             obstacle = True
 
@@ -120,7 +135,9 @@ def callback_laser(msg):
             currLabels.append(0)
 
         # middle part of laser [45:75]
-        if np.min(rangesNum[45:75])<bump_thresh_1 or np.min(rangesNum[0:45])<bump_thresh_0_2 or np.min(rangesNum[75:])<bump_thresh_0_2:
+        if np.min(rangesNum[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
+                        np.min(rangesNum[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
+                        np.min(rangesNum[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             if not move_complete:
                 print "Was still moving and bumped\n"
                 import time
@@ -138,8 +155,8 @@ def callback_laser(msg):
                 currInputs=[]
                 currLabels=[]
 
-        print(currLabels)
-    
+        print "Laser data length: %s"%len(currLabels)
+
 def reverse_robot():
     print "Reversing Robot\n"
     import time
@@ -206,6 +223,7 @@ def callback_path_finish(msg):
     from os import system
     import time
     global move_complete,isMoving
+    global cam_count,laser_count
     if int(msg.data)==1:
         print "saving data...\n"
         save_data()
@@ -216,6 +234,8 @@ def callback_path_finish(msg):
             system(cmd)
             print 'Robot was still moving. Manually killing the path'
         isMoving = False
+
+    cam_count,laser_count = 0,0
 
 def callback_action_status(msg):
     global isMoving, move_complete
@@ -251,8 +271,8 @@ def save_data():
     currLabels=[]
     initial_data = False
 
-thumbnail_w = 128
-thumbnail_h = 96
+thumbnail_w = utils.THUMBNAIL_W
+thumbnail_h = utils.THUMBNAIL_H
 
 reversing = False
 isMoving = False
@@ -267,6 +287,10 @@ cmd_vel_pub = None
 restored_bump_pub = None
 obstacle_msg_sent = False
 
+laser_range_0,laser_range_1,laser_range_2 = None,None,None
+cam_skip, laser_skip = 0,0
+cam_count,laser_count = 0,0
+
 vel_lin_buffer = []
 vel_ang_buffer = []
 
@@ -274,21 +298,46 @@ if __name__=='__main__':
     currInputs = []
     currLabels = []
 
+    cam_skip = (utils.CAMERA_FREQUENCY/utils.PREF_FREQUENCY)
+    laser_skip = (utils.LASER_FREQUENCY/utils.PREF_FREQUENCY)
+
+    #laser range slicing algorithm
+    if utils.LASER_ANGLE<=180:
+        laser_slice = int(utils.LASER_POINT_COUNT/6.)
+        laser_range_0 = (0,int(laser_slice))
+        laser_range_1 = (int((utils.LASER_POINT_COUNT/2.)-laser_slice),int((utils.LASER_POINT_COUNT/2.)+laser_slice))
+        laser_range_2 = (-int(laser_slice),-1)
+
+    # if laser exceeds 180 degrees
+    else:
+        laser_slice = int(((utils.LASER_POINT_COUNT*1.0/utils.LASER_ANGLE)*180.)/6.)
+        cutoff_angle_per_side = int((utils.LASER_ANGLE - 180)/2.)
+        ignore_points_per_side = (utils.LASER_POINT_COUNT*1.0/utils.LASER_ANGLE)*cutoff_angle_per_side
+        laser_range_0 = (int(ignore_points_per_side),int(laser_slice+ignore_points_per_side))
+        laser_range_1 = (int((utils.LASER_POINT_COUNT/2.)-laser_slice),int((utils.LASER_POINT_COUNT/2.)+laser_slice))
+        laser_range_2 = (-int(laser_slice-ignore_points_per_side),-int(ignore_points_per_side))
+
+    print "Laser slicing information"
+    print "Laser points: %d" %utils.LASER_POINT_COUNT
+    print "Laser angle: %d" %utils.LASER_ANGLE
+    print "Laser slice size: %d" %laser_slice
+    print "Laser ranges 0(%s),1(%s),2(%s)" %(laser_range_0,laser_range_1,laser_range_2)
+
     rospy.init_node("save_data_node")
     #rate = rospy.Rate(1)
-    data_status_pub = rospy.Publisher('data_sent_status', Int16, queue_size=10)
-    sent_input_pub = rospy.Publisher('data_inputs', numpy_msg(Floats), queue_size=10)
-    sent_label_pub = rospy.Publisher('data_labels', numpy_msg(Floats), queue_size=10)
-    obstacle_status_pub = rospy.Publisher('obstacle_status',Bool, queue_size=10)
-    cmd_vel_pub = rospy.Publisher('cmd_vel',Twist,queue_size=10)
-    restored_bump_pub = rospy.Publisher('restored_bump',Bool, queue_size=10)
+    data_status_pub = rospy.Publisher(utils.DATA_SENT_STATUS, Int16, queue_size=10)
+    sent_input_pub = rospy.Publisher(utils.DATA_INPUT_TOPIC, numpy_msg(Floats), queue_size=10)
+    sent_label_pub = rospy.Publisher(utils.DATA_LABEL_TOPIC, numpy_msg(Floats), queue_size=10)
+    obstacle_status_pub = rospy.Publisher(utils.OBSTACLE_STATUS_TOPIC,Bool, queue_size=10)
+    cmd_vel_pub = rospy.Publisher(utils.CMD_VEL_TOPIC,Twist,queue_size=10)
+    restored_bump_pub = rospy.Publisher(utils.RESTORE_AFTER_BUMP_TOPIC,Bool, queue_size=10)
 
-    rospy.Subscriber("/camera/image", Image, callback_cam)
-    rospy.Subscriber("/obs_scan", LaserScan, callback_laser)
-    rospy.Subscriber("/odom", Odometry, callback_odom)
+    rospy.Subscriber(utils.CAMERA_IMAGE_TOPIC, Image, callback_cam)
+    rospy.Subscriber(utils.LASER_SCAN_TOPIC, LaserScan, callback_laser)
+    rospy.Subscriber(utils.ODOM_TOPIC, Odometry, callback_odom)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
-    rospy.Subscriber("/action_status", Int16, callback_action_status)
-    rospy.Subscriber('/cmd_vel',Twist,callback_cmd_vel)
+    rospy.Subscriber(utils.ACTION_STATUS_TOPIC, Int16, callback_action_status)
+    rospy.Subscriber(utils.CMD_VEL_TOPIC,Twist,callback_cmd_vel)
 
     #rate.sleep()
     rospy.spin() # this will block untill you hit Ctrl+C

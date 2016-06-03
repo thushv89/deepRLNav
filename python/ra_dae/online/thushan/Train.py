@@ -914,6 +914,7 @@ persist_every = 10
 bump_count_window = 25
 restore_last = None
 last_persisted = 0
+
 # if True, we use (not i_bumped) instances to add to pool
 # if False, we use i_bumped instances to add to pool
 pool_with_not_bump = True
