@@ -117,9 +117,14 @@ def callback_laser(msg):
         labels = [0,0,0]
         obstacle = False
 
-        if np.min(rangesNum[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
-                        np.min(rangesNum[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
-                        np.min(rangesNum[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
+        filtered_ranges = np.asarray(rangesNum)
+        filtered_ranges[filtered_ranges<utils.NO_RETURN_THRESH] = 1000
+
+        print np.min(filtered_ranges)
+
+        if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
+                        np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
+                        np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             print "Obstacle set to True\n"
             obstacle = True
 
@@ -134,9 +139,9 @@ def callback_laser(msg):
             currLabels.append(0)
 
         # middle part of laser [45:75]
-        if np.min(rangesNum[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
-                        np.min(rangesNum[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
-                        np.min(rangesNum[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
+        if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
+                        np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
+                        np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             if not move_complete:
                 print "Was still moving and bumped\n"
                 import time
