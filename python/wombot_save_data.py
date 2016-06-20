@@ -28,6 +28,8 @@ def callback_cam(msg):
     if cam_count%cam_skip != 0:
         return
 
+
+    
     if isMoving and not reversing:
         global currInputs
 
@@ -35,15 +37,17 @@ def callback_cam(msg):
         
         rows = int(msg.height)
         cols = int(msg.width)
-        print "height:%s, length:%s"%(rows,cols)
+        #print "height:%s, length:%s"%(rows,cols)
         num_data = []
-        
+        print "data:%s"%len(data)        
         isAutoencoder = True
         if isAutoencoder:
-            for i in range(0,len(data),4):
+            for i in range(0,len(data),3):
                 num_data.append(int(0.2989 * ord(data[i]) + 0.5870 * ord(data[i+1]) + 0.1140 * ord(data[i+2])))
 	    
+            #print "num_data:%s"%len(num_data)	    
             mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,-1))
+            #print "mat:h:%s,w:%s"%(mat.shape[0],mat.shape[1])
             img_mat = img.fromarray(mat)
             img_mat.thumbnail((thumbnail_w,thumbnail_h))
             img_mat_data = img_mat.getdata()
@@ -56,7 +60,8 @@ def callback_cam(msg):
             img_preprocessed = np.delete(img_preprocessed,np.s_[:vertical_cut_threshold],0)
             img_preprocessed = np.delete(img_preprocessed,np.s_[-vertical_cut_threshold:],0)
 
-
+	    img_preprocessed = np.fliplr(img_preprocessed)
+	    img_preprocessed = np.flipud(img_preprocessed)
             # use if you wann check images data coming have correct data (image cropped resized)
             '''sm.imsave('avg_img'+str(1)+'.jpg', np.reshape(img_data_reshape,
                                                           (int(thumbnail_h-2*vertical_cut_threshold),-1))
@@ -87,7 +92,7 @@ def callback_cam(msg):
             print('num data',len(num_data))
                      
         currInputs.append(list(img_preprocessed))
-        print 'Cam data length: %s'%len(currInputs)
+        print 'Input count: %s\n'%len(currInputs)
 
 def callback_laser(msg):
     global obstacle_msg_sent
@@ -119,7 +124,7 @@ def callback_laser(msg):
         filtered_ranges = np.asarray(rangesNum)
         filtered_ranges[filtered_ranges<utils.NO_RETURN_THRESH] = 1000
 
-        print np.min(filtered_ranges)
+        print "min range:%s"%np.min(filtered_ranges)
 
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
@@ -158,7 +163,7 @@ def callback_laser(msg):
                 currInputs=[]
                 currLabels=[]
 
-        print "Laser data length: %s"%len(currLabels)
+        print "Labels count: %s\n"%len(currLabels)
 
 def reverse_robot():
     print "Reversing Robot\n"
@@ -169,7 +174,7 @@ def reverse_robot():
     for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
         lin_vec = Vector3(-l[0],-l[1],-l[2])
         ang_vec = Vector3(-a[0],-a[1],-a[2])
-        time.sleep(0.1)
+        time.sleep(0.12)
         twist_msg = Twist()
         twist_msg.linear = lin_vec
         twist_msg.angular = ang_vec
@@ -193,34 +198,36 @@ def callback_odom(msg):
     global prevPose
     global isMoving,initial_data
 
-    if initial_data:
-        data = msg
-        pose = data.pose.pose # has position and orientation
+    #if initial_data:
+    
+    data = msg
+    pose = data.pose.pose # has position and orientation
+    
+    if not reversing:
+    	x = float(pose.position.x)
+    	prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
+    	y = float(pose.position.y)
+    	prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
+    	z = float(pose.position.z)
+    	prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
 
-        x = float(pose.position.x)
-        prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
-        y = float(pose.position.y)
-        prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
-        z = float(pose.position.z)
-        prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
+    	xo = float(pose.orientation.x)
+    	prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
+    	yo = float(pose.orientation.y)
+    	prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
+    	zo = float(pose.orientation.z)
+    	prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
+    	wo = float(pose.orientation.w)
+    	prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
 
-        xo = float(pose.orientation.x)
-        prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
-        yo = float(pose.orientation.y)
-        prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
-        zo = float(pose.orientation.z)
-        prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
-        wo = float(pose.orientation.w)
-        prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
-
-        tolerance = 0.001
-        if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance
-           and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
-            isMoving = False
-        else:
-            isMoving = True
-
-        prevPose = data.pose.pose
+    	tolerance = 0.001
+    	if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance  and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
+	    isMoving = False
+    	else:
+	    isMoving = True
+    else:
+    	isMoving = False
+    prevPose = data.pose.pose
 
 def callback_path_finish(msg):
     from os import system
@@ -236,7 +243,7 @@ def callback_path_finish(msg):
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
             print 'Robot was still moving. Manually killing the path'
-        isMoving = False
+        #isMoving = False
 
     cam_count,laser_count = 0,0
 
@@ -244,7 +251,7 @@ def callback_action_status(msg):
     global isMoving, move_complete
     global vel_lin_buffer,vel_ang_buffer
     move_complete = False
-    isMoving = True
+    #isMoving = True
     #empty both velocity buffers
     vel_lin_buffer,vel_ang_buffer=[],[]
 

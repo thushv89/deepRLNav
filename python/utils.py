@@ -1,9 +1,9 @@
 
 #COMMON TOPICS
-CAMERA_IMAGE_TOPIC = "/camera/image"
-LASER_SCAN_TOPIC = "/obs_scan"
+CAMERA_IMAGE_TOPIC = "/camera/image_color"
+LASER_SCAN_TOPIC = "/scan"
 ODOM_TOPIC = "/odom"
-CMD_VEL_TOPIC = "/cmd_vel"
+CMD_VEL_TOPIC = "/wombot/cmd_vel"
 
 #MY TOPICS
 ACTION_STATUS_TOPIC = "/action_status"
@@ -16,22 +16,22 @@ INITIAL_RUN_TOPIC = "/initial_run"
 GOAL_TOPIC = "/move_base_simple/goal"
 
 # CAMERA
-CAMERA_FREQUENCY = 10
+CAMERA_FREQUENCY = 30
 IMG_W, IMG_H = 640, 480
 THUMBNAIL_W, THUMBNAIL_H = 128, 96
 
 #BUMP DETECTION
-BUMP_1_THRESH = 0.5
-BUMP_02_THRESH = 0.65
+BUMP_1_THRESH = 0.25 #sim 0.5 real 0.03
+BUMP_02_THRESH = 0.30 #sim 0.65 real 0.05
 NO_RETURN_THRESH = 0.002
 
 #LASER
-LASER_FREQUENCY = 20
-LASER_POINT_COUNT = 120
-LASER_ANGLE = 120
+LASER_FREQUENCY = 40
+LASER_POINT_COUNT = 1080
+LASER_ANGLE = 270
 
 PREF_FREQUENCY = 5
 
 #COMMANDS
 GOAL_CANCEL_CMD = "rosservice call /autonomy/path_follower/cancel_request"
-MOVE_ROBOT_CMD = "../ros/move_robot/devel/lib/move_robot/move_robot "
+MOVE_ROBOT_CMD = "./wombot_move_robot "
