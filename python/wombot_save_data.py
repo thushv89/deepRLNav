@@ -39,7 +39,7 @@ def callback_cam(msg):
         cols = int(msg.width)
         #print "height:%s, length:%s"%(rows,cols)
         num_data = []
-        print "data:%s"%len(data)        
+        #print "data:%s"%len(data)        
         isAutoencoder = True
         if isAutoencoder:
             for i in range(0,len(data),3):
@@ -67,29 +67,6 @@ def callback_cam(msg):
                                                           (int(thumbnail_h-2*vertical_cut_threshold),-1))
                       )'''
             img_preprocessed.flatten()
-
-        # for CNN
-        else:
-            data_r = []
-            data_g = []
-            data_b = []
-            for i in range(0,len(data),4):
-                data_r.append(ord(data[i]))
-                data_g.append(ord(data[i+1]))
-                data_b.append(ord(data[i+2]))
-            
-            num_data.extend(data_r)
-            num_data.extend(data_g)
-            num_data.extend(data_b)
-            
-            #mat = np.reshape(np.asarray(num_data,dtype='uint8'),(rows,cols,-1))
-
-            #img_mat = img.fromarray(mat,'RGB')
-
-            #for RGB mode, img.getdata returns a 256x256 long array. each element is a 3 item tuple
-            
-            img_mat_data = num_data
-            print('num data',len(num_data))
                      
         currInputs.append(list(img_preprocessed))
         print 'Input count: %s\n'%len(currInputs)
@@ -174,14 +151,14 @@ def reverse_robot():
     for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
         lin_vec = Vector3(-l[0],-l[1],-l[2])
         ang_vec = Vector3(-a[0],-a[1],-a[2])
-        time.sleep(0.12)
+        time.sleep(utils.REVERSE_PUBLISH_DELAY)
         twist_msg = Twist()
         twist_msg.linear = lin_vec
         twist_msg.angular = ang_vec
         cmd_vel_pub.publish(twist_msg)
 
     for _ in range(10):
-        time.sleep(0.05)
+        time.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
         twist_msg = Twist()
         twist_msg.linear = Vector3(0,0,0)
         twist_msg.angular = Vector3(0,0,0)
@@ -220,10 +197,13 @@ def callback_odom(msg):
     	wo = float(pose.orientation.w)
     	prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
 
+	print "Pose:%s"%np.max([abs(x - prevX),abs(y - prevY),abs(z - prevZ)])
+	print "Orientation:%s\n"%np.max([abs(xo - prevXO),abs(yo - prevYO),abs(zo - prevZO),abs(wo - prevWO)])
     	tolerance = 0.001
     	if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance  and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
 	    isMoving = False
     	else:
+	    
 	    isMoving = True
     else:
     	isMoving = False
@@ -243,7 +223,6 @@ def callback_path_finish(msg):
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
             print 'Robot was still moving. Manually killing the path'
-        #isMoving = False
 
     cam_count,laser_count = 0,0
 
