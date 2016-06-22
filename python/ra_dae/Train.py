@@ -21,6 +21,9 @@ from std_msgs.msg import Int16
 from math import ceil
 import logging
 import sys
+from threading import Lock
+import random
+
 
 logging_level = logging.DEBUG
 
@@ -96,7 +99,7 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
             logger.info('Creating (i=',i,') init_size: %s\n', nn_layer.initial_size)
 
     if layer_params is not None:
-        if hparams.model_type=='DeepRL':
+        if hparams.model_type=='DeepRL' or hparams.model_type=='SDAE':
             W,b,b_prime = layer_params[-1]
             logger.info('Restoring (i=-1) W: %s',W.shape)
             logger.info('Restoring (i=-1) b: %s',b.shape)
@@ -104,6 +107,7 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
             logger.info('Restoring (i=-1) init_size: %s\n', init_sizes[-1])
 
             layers.append(NNLayer.Layer(hparams.hid_sizes[-1], hparams.out_size, False, W, b, b_prime,init_sizes[-1]))
+
         elif hparams.model_type=='DeepRLMultiSoftmax':
             out_layers = []
             W_str,b_str,b_prime_str,init_size_str = '','','',''
@@ -124,7 +128,7 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
             layers.append(out_layers)
 
     else:
-        if hparams.model_type=='DeepRL':
+        if hparams.model_type=='DeepRL' or hparams.model_type=='SDAE':
             nn_layer = NNLayer.Layer(hparams.hid_sizes[-1], hparams.out_size, False, None, None, None,None)
             logger.info('Creating (i=-1) W: %s',nn_layer.W.get_value().shape)
             logger.info('Creating (i=-1) b: %s',nn_layer.b.get_value().shape)
@@ -153,7 +157,7 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
 
     return layers
 
-num_classes = 3
+
 def make_model(hparams, restore_data=None,restore_pool=None):
     # restoredata should have layer
     rng = T.shared_randomstreams.RandomStreams(0)
@@ -161,6 +165,7 @@ def make_model(hparams, restore_data=None,restore_pool=None):
     global episode,num_bumps,deeprl_episodes,algo_move_count
     global logger
 
+    # if initially starting (not loading previous data
     if restore_data is not None:
         layer_params,init_sizes,rl_q_vals,(ep,nb,deeprl_ep,algo_moves) = restore_data
         episode = ep
@@ -171,24 +176,40 @@ def make_model(hparams, restore_data=None,restore_pool=None):
             policies = [RLPolicies.ContinuousState(q_vals=q) for q in rl_q_vals]
             assert len(policies) == len(hparams.hid_sizes)
             logger.debug('All policies are correctly restored for DeepRL\n')
+            layers = make_layers(hparams, layer_params, init_sizes)
 
         elif hparams.model_type == 'DeepRLMultiSoftmax':
             policies = [[RLPolicies.ContinuousState(q_vals=q) for q in rl_q_1] for rl_q_1 in rl_q_vals]
             # check if all policies are loaded
             assert len(policies)*len(policies[0]) == hparams.out_size*len(hparams.hid_sizes)
             logger.debug('All policies are correctly restored for DeepRLMultiSoftmax\n')
+            layers = make_layers(hparams, layer_params, init_sizes)
 
-        layers = make_layers(hparams, layer_params, init_sizes)
+        elif hparams.model_type == 'LogisticRegression':
+            W,b,b_prime = layer_params[0]
+            layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, W, b, b_prime,init_sizes[0])]
+
+        elif hparams.model_type == 'SDAE':
+            layers = make_layers(hparams,layer_params,init_sizes)
+
     else:
         if hparams.model_type == 'DeepRL':
             policies = [RLPolicies.ContinuousState() for _ in range(len(hparams.hid_sizes))]
             assert len(policies) == len(hparams.hid_sizes)
             logger.debug('All policies are correctly created for DeepRL\n')
+            layers = make_layers(hparams)
+
         elif hparams.model_type == 'DeepRLMultiSoftmax':
             policies = [[RLPolicies.ContinuousState() for _ in range(len(hparams.hid_sizes))] for __ in range(hparams.out_size)]
             assert len(policies)*len(policies[0]) == hparams.out_size*len(hparams.hid_sizes)
             logger.debug('All policies are correctly created for DeepRLMultiSoftmax\n')
-        layers = make_layers(hparams)
+            layers = make_layers(hparams)
+
+        elif hparams.model_type == 'LogisticRegression':
+            layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, None, None, None,None)]
+
+        elif hparams.model_type == 'SDAE':
+            layers = make_layers(hparams)
 
     if hparams.model_type == 'DeepRL':
         model = DLModels.DeepReinforcementLearningModel(layers, rng, policies, hparams, hparams.out_size)
@@ -223,9 +244,11 @@ def make_model(hparams, restore_data=None,restore_pool=None):
             model.restore_pool(hparams.batch_size,X,Y,DX,DY)
             model.set_episode_count(deeprl_ep)
 
-    elif hparams.model_type == 'SAE':
-        model = DLModels.StackedAutoencoderWithSoftmax(
-            layers,hparams.corruption_level,rng,hparams.lam,hparams.iterations)
+    elif hparams.model_type == 'SDAE':
+        model = DLModels.StackedAutoencoderWithSoftmax(layers,rng,hparams)
+
+    elif hparams.model_type == 'LogisticRegression':
+        model = DLModels.LogisticRegression(layers[0],hparams)
 
     return model
 
@@ -235,228 +258,116 @@ i_bumped = False
 num_bumps = 0
 
 
-def train(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, model_type):
+def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
+    global logger,logging_level,logging_format
+    global last_action,num_bumps,i_bumped
 
-    model.process(T.matrix('x'), T.matrix('y'),training=True)
+    model.process()
     start_time = time.clock()
 
-    for arc in range(model.arcs):
-        v_errors = []
-        results_func = model.error_func
+    check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
 
-        #avg_inputs = np.empty((data_file[2],in_size),dtype=theano.config.floatX)
-        #n_train_b = int(ceil(data_file[2]*1.0 / batch_size))
+    i_bumped = False
 
-        #create averaged images from the pool
-        #for t_batch_tmp in range(n_train_b):
-        #    batch_before_avg = data_file[0].get_value()[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size]
-        #    batch_avg = input_avger.get_avg_input(theano.shared(batch_before_avg))
-        #    avg_inputs[t_batch_tmp*batch_size:(t_batch_tmp+1)*batch_size] = batch_avg
-        #th_avg_inputs = theano.shared(avg_inputs,name='avg_inputs')
-        #print('[train]avg_in size',avg_inputs.shape)
+    for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
+        if not check_fwd(t_batch):
+            i_bumped = True
+            num_bumps += 1
+            break
 
-        if model_type == 'DeepRL':
+    if not i_bumped:
+        logger.info('Didnt bump. yay!!!')
+        logger.debug('I took correct action %s',last_action)
 
-            #import scipy # use ifyou wanna check images are received correctly
-            #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
-            #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
+        y_tmp = []
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(last_action)
 
-            y_list = []
-            for i,y in enumerate(data_file[1].eval()):
-                if y==0:
-                    # we don't really use this. because if 0 it means check_fwd is 0
-                    y_list.append([0.5,0,0.5])
-                if y==1:
-                    y_list.append([0,1,0])
+        shared_y = theano.shared(np.asarray(y_tmp))
+        pre_train_func,finetune_func = model.train_func(
+            prev_data_file[0], T.cast(shared_y,'int32'))
+        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+            pre_train_func(p_t_batch)
+            finetune_func(p_t_batch)
 
-            logger.debug('Mean y values [left,straight,right]: %s',np.mean(np.asarray(y_list),axis=0))
-            train_adaptive,update_pool = model.train_func(
-                arc, learning_rate, data_file[0], theano.shared(np.asarray(y_list,dtype=theano.config.floatX)),
-                batch_size)
+    if i_bumped:
 
-            check_fwd = model.check_forward(arc, data_file[0], data_file[1], batch_size)
+        logger.info('Bumped after taking action %s', last_action)
 
-        elif model_type == 'SAE':
-            pretrain_func,finetune_func,finetune_valid_func = model.train_func(arc, learning_rate, data_file[0], data_file[1], batch_size, False, None,None)
+        y_tmp = []
+        pos_actions =  [0,1,2]
+        pos_actions.remove(int(last_action))
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(random.choice(pos_actions))
 
+        shared_y = theano.shared(np.asarray(y_tmp))
 
-        logger.info('\nTRAINING DATA ...\n')
-        try:
-            if model_type == 'DeepRL':
+        pre_train_func,finetune_func = model.train_func(
+            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/5.0)
 
-                from collections import Counter
-                global last_action,episode,i_bumped,num_bumps,pool_with_not_bump
-
-                i_bumped = False
-                alpha = 0.5
-
-                # if True, intead of using 0.5 and 0.5 for unknown directions, use
-                # (1-alpha)*current output + alpha * (0.5 output)
-                use_exp_averaging = False
-
-                # if we should go forward #no training though
-                # we always train from previous batches
-                for i in range(int(ceil(data_file[2]*1.0 / batch_size))):
-                    if not check_fwd(i):
-                        i_bumped = True
-                        num_bumps += 1
-                        break
-
-                for p_t_batch in range(prev_data_file[0].get_value().shape[0]):
-                    t_dist = Counter(prev_data_file[1][p_t_batch * batch_size: (p_t_batch + 1) * batch_size].eval())
-                    model.update_train_distribution({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()})
-
-                if not i_bumped:
-
-                    logger.debug('Didnt bump. yay!!! (No training)')
-
-                    if pool_with_not_bump and last_action == 0:
-                        logger.debug('I took correct action 0 (Adding to pool)')
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([1.0,0,0])
-                        _,update_pool = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            update_pool(p_t_batch)
-
-                    elif pool_with_not_bump and last_action == 1:
-                        logger.debug('I took correct action 1 (Adding to pool)')
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0,1.,0])
-                        _,update_pool = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            update_pool(p_t_batch)
-                    elif pool_with_not_bump and last_action==2:
-                        logger.debug('I took correct action 2 (Adding to pool)')
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0,0,1.0])
-                        _,update_pool = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            update_pool(p_t_batch)
-                    # though we didn't bump we can't say for sure, which direction whould be best
-                    # coz we haven't observed other directions, so we give equal probability
-                    # for all directions
-                    #y_tmp = []
-                    #for i in range(prev_data_file[0].get_value().shape[0]):
-                    #    y_tmp.append([0.33,0.34,0.33])
-                    #train_adaptive_prev = model.train_func(
-                    #    arc, learning_rate, prev_data_file[0],
-                    #    theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX)), batch_size)
-                    #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                    #    train_adaptive_prev(p_t_batch)
-
-                # don't update last_action here, do it in the test
-                # we've bumped
-                if i_bumped:
-                    logger.debug('Bumped after taking action %s', last_action)
-                    #p_for_batch = get_proba_func(t_batch)
-                    #act_for_batch = np.argmax(p_for_batch,axis=0)
-                    if last_action == 0:
-                        # train using [0,0.5,0.5]
-                        logger.debug('I shouldve taken action 1 or 2')
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0,0.5,0.5])
-
-                        y = np.asarray(y_tmp)
-
-                        if use_exp_averaging:
-
-                            get_proba_func = model.get_predictions_func(arc, prev_data_file[0], batch_size)
-
-                            all_probas = None
-                            for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                                probas = get_proba_func(p_t_batch)
-                                if all_probas is None:
-                                    all_probas = probas
-                                else:
-                                    all_probas = np.append(all_probas,probas,axis=0)
-
-                            assert all_probas.shape == y.shape
-                            y = (1-alpha)*all_probas + alpha*y
-
-                        train_adaptive_prev,_ = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size)
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            train_adaptive_prev(p_t_batch)
-
-                    elif last_action == 1:
-                        # train adaptively using [0.5, 0, 0.5]
-                        logger.debug('I shouldve taken action 0 or 2')
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0.5,0,0.5])
-
-                        y = np.asarray(y_tmp)
-
-                        if use_exp_averaging:
-
-                            get_proba_func = model.get_predictions_func(arc, prev_data_file[0], batch_size)
-
-                            all_probas = None
-                            for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                                probas = get_proba_func(p_t_batch)
-                                if all_probas is None:
-                                    all_probas = probas
-                                else:
-                                    all_probas = np.append(all_probas,probas,axis=0)
-
-                            assert all_probas.shape == y.shape
-                            y = (1-alpha)*all_probas + alpha*y
-
-                        train_adaptive_prev,_ = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size)
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            train_adaptive_prev(p_t_batch)
-                        # no point in takeing actions here, coz we've bumped
-
-                    else:
-                        logger.debug('I shouldve taken action 0 or 1')
-                        # train_using [0.5,0.5,0]
-                        y_tmp = []
-                        for i in range(prev_data_file[0].get_value().shape[0]):
-                            y_tmp.append([0.5,0.5,0])
-
-                        y = np.asarray(y_tmp)
-
-                        if use_exp_averaging:
-
-                            get_proba_func = model.get_predictions_func(arc, prev_data_file[0], batch_size)
-
-                            all_probas = None
-                            for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                                probas = get_proba_func(p_t_batch)
-                                if all_probas is None:
-                                    all_probas = probas
-                                else:
-                                    all_probas = np.append(all_probas,probas,axis=0)
-
-                            assert all_probas.shape == y.shape
-                            y = (1-alpha)*all_probas + alpha*y
-
-                        train_adaptive_prev,_ = model.train_func(
-                            arc, learning_rate, prev_data_file[0],
-                            theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size)
-
-                        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
-                            train_adaptive_prev(p_t_batch)
-
-        except StopIteration:
-            pass
+        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+            pre_train_func(p_t_batch)
+            finetune_func(p_t_batch)
 
     end_time = time.clock()
-    logger.info('Time taken for the episode: %10.3f (mins)',(end_time-start_time)/60)
+    logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
     return
+
+
+def train_logistic_regression(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
+    global logger,logging_level,logging_format
+    global last_action,num_bumps,i_bumped
+
+    model.process()
+    start_time = time.clock()
+
+
+    check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
+
+    i_bumped = False
+
+    for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
+        if not check_fwd(t_batch):
+            i_bumped = True
+            num_bumps += 1
+            break
+
+    if not i_bumped:
+        logger.info('Didnt bump. yay!!!')
+        logger.debug('I took correct action %s',last_action)
+
+        y_tmp = []
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(last_action)
+
+        shared_y = theano.shared(np.asarray(y_tmp))
+        train = model.train_func(
+            prev_data_file[0], T.cast(shared_y,'int32'))
+        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+            train(p_t_batch)
+
+    if i_bumped:
+
+        logger.info('Bumped after taking action %s', last_action)
+
+        y_tmp = []
+        pos_actions =  [0,1,2]
+        pos_actions.remove(int(last_action))
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(random.choice(pos_actions))
+
+        shared_y = theano.shared(np.asarray(y_tmp))
+
+        train = model.train_func(
+            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/5.0)
+
+        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+            train(p_t_batch)
+
+    end_time = time.clock()
+    logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+    return
+
 
 def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, model_type):
 
@@ -616,7 +527,10 @@ def test(shared_data_file_x,arc,model, model_type):
     global i_bumped,hyperparam
     global logger
 
-    model.process(T.matrix('x'), T.matrix('y'),training=False)
+    if model_type == 'DeepRLMultiSoftmax':
+        model.process(T.matrix('x'), T.matrix('y'),training=False)
+    elif model_type == 'LogisticRegression':
+        model.process()
 
     if model_type == 'DeepRL':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
@@ -635,14 +549,28 @@ def test(shared_data_file_x,arc,model, model_type):
                 probs = np.append(probs,np.mean(func(last_idx),axis=0).reshape(-1,1),axis=1)
 
         probs = probs[0]
+    elif model_type == 'LogisticRegression':
+        get_proba_func = model.get_predictions_func(shared_data_file_x, hyperparam.batch_size)
+        last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
+        logger.debug('Last idx: %s',last_idx)
+        probs = np.mean(get_proba_func(last_idx),axis=0)
 
     logger.info('Probs: %s', probs)
+
     if model_type == 'DeepRL':
         random_threshold = 0.35
-        if np.max(probs)<random_threshold:
+        if np.max(probs)>random_threshold:
             action = np.argmax(probs)
         else:
             action = np.random.randint(0,3)
+
+    if model_type == 'LogisticRegression':
+        random_threshold = 0.25
+        if np.max(probs)>random_threshold:
+            action = np.argmax(probs)
+        else:
+            action = np.random.randint(0,3)
+
     elif model_type == 'DeepRLMultiSoftmax':
         #random_threshold = 0.9
         rand_threshold = 0.5 * (1.-hyperparam.dropout) * 0.9
@@ -654,7 +582,7 @@ def test(shared_data_file_x,arc,model, model_type):
             action = np.argmax(probs)
             logger.info('Action got: %s \n', action)
         else:
-            import random
+
             action = random.choice(idx_above_thresh) if len(idx_above_thresh)>0 else random.choice([0,1,2])
             logger.info('Action got (random): %s \n', action)
 
@@ -668,6 +596,7 @@ def run(data_file,prev_data_file):
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
     global initial_run
+    global  hit_obstacle,reversed,move_complete
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
@@ -701,18 +630,21 @@ def run(data_file,prev_data_file):
         action = -1
 
         if shared_data_file and shared_data_file[2]>0 and do_train:
-            if not hyperparam.model_type == 'DeepRLMultiSoftmax':
-                train(hyperparam.batch_size, shared_data_file, prev_shared_data_file,
-                           hyperparam.pre_epochs, hyperparam.finetune_epochs, hyperparam.learning_rate, model, hyperparam.model_type)
-            else:
+            if hyperparam.model_type == 'DeepRLMultiSoftmax':
                 train_multi_softmax(hyperparam.batch_size, shared_data_file, prev_shared_data_file,
                            hyperparam.pre_epochs, hyperparam.finetune_epochs, hyperparam.learning_rate, model, hyperparam.model_type)
+            elif hyperparam.model_type == 'LogisticRegression':
+                train_logistic_regression(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
+            else:
+                raise NotImplementedError
 
-            layer_out_size_str = str(episode)+',' + str(algo_move_count)+','
-            for l in model.layers[:-1]:
-                layer_out_size_str += str(l.current_out_size)+','
 
-            netsize_logger.info(layer_out_size_str)
+            if hyperparam.model_type == 'DeepRLMultiSoftmax' or hyperparam.model_type == 'DeepRL':
+                layer_out_size_str = str(episode)+',' + str(algo_move_count)+','
+                for l in model.layers[:-1]:
+                    layer_out_size_str += str(l.current_out_size)+','
+
+                netsize_logger.info(layer_out_size_str)
             # if i_bumped, current data has the part that went ahead and bumped (we discard this data)
             # if i_bumped, we need to get the prediction with previous data instead of feeding current data
             if not i_bumped:
@@ -761,7 +693,13 @@ def run(data_file,prev_data_file):
 
     episode += 1
 
-    global  hit_obstacle,reversed
+
+    # wait till the move complete to publish action
+    logger.debug('Waiting for the move to complete')
+    while not move_complete:
+        True
+    logger.debug('Move completed. Checking for bumps')
+
     if not hit_obstacle:
         logger.debug('Did not hit an obstacle. Executing action\n')
         action_pub.publish(action)
@@ -769,9 +707,9 @@ def run(data_file,prev_data_file):
         logger.debug('Hit an obstacle. Waiting for reverse to complete')
         temp_i = 0
         while (not reversed) and temp_i<100:
-            True
             time.sleep(0.1)
             temp_i += 1
+
         logger.debug('Reverse done. Executing action\n')
 
         # we publish the action only if we recieved reserved signal
@@ -822,7 +760,7 @@ def save_images_curr_prev(prev,curr):
 def callback_data_save_status(msg):
 
     global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode,run_mutex
-    global hit_obstacle,reversed
+    global hit_obstacle,reversed,move_complete
     global save_images
 
     initial_data = int(msg.data)
@@ -860,13 +798,15 @@ def callback_data_save_status(msg):
             run([data_inputs,data_labels],prev_data)
             if not hit_obstacle:
                 prev_data = [data_inputs,data_labels]
-            hit_obstacle = False
-            reversed = False
+
         finally:
             run_mutex.release()
     else:
         logger.warning("\nNo data to run\n")
 
+    move_complete = False
+    hit_obstacle = False
+    reversed = False
 
 def callback_data_inputs(msg):
     global data_inputs,hyperparam
@@ -888,14 +828,21 @@ def callback_restored_bump(msg):
     global last_action,action_pub
     global episode,algo_move_count
     global reversed
+
     reversed = True
     #episode += 1
     #algo_move_count += 1
     #action_pub.publish(last_action)
 
 def callback_obstacle_status(msg):
-    global  hit_obstacle
+    global  hit_obstacle,move_complete
+
     hit_obstacle = True
+    move_complete = True
+
+def callback_path_finish(msg):
+    global move_complete
+    move_complete = True
 
 def callback_initial_run(msg):
     global  initial_run
@@ -934,8 +881,8 @@ param_logger = None
 
 prev_log_bump_ep = 0
 
-from threading import Lock
 run_mutex = Lock()
+move_complete = False
 
 class HyperParams(object):
 
@@ -947,6 +894,12 @@ class HyperParams(object):
         self.activation = 'sigmoid' #relu/sigmoid/softplus
         self.learning_rate = -1
         self.batch_size = -1
+        self.test_batch_size = -1
+
+        # number of batches we use to train the model, because the images at the end are the most important
+        # so we get <train_batch_count> batches from the end of the data stream to train
+        self.train_batch_count = -1
+
         self.epochs = -1
         self.hid_sizes = []
         self.corruption_level = -1
@@ -1045,11 +998,14 @@ if __name__ == '__main__':
         hyperparam.in_size = 7424
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
-        hyperparam.model_type = 'DeepRLMultiSoftmax'
+        hyperparam.model_type = 'LogisticRegression' # DeepRLMultiSoftmax or LogisticRegression
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.02
+        hyperparam.learning_rate = 0.1 #0.01 multisoftmax #0.2 logistic
         hyperparam.batch_size = 5
+        hyperparam.test_batch_size = 3
+        hyperparam.train_batch_count = 2
+
         hyperparam.epochs = 1
 
         hyperparam.hid_sizes = [32]
@@ -1151,6 +1107,8 @@ if __name__ == '__main__':
     rospy.Subscriber("/restored_bump",Bool,callback_restored_bump)
     rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)
     rospy.Subscriber("/initial_run",Bool,callback_initial_run)
+    rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
+
     rospy.spin()
 
 
