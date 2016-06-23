@@ -21,14 +21,14 @@ import scipy.misc as sm
 import utils
 
 def callback_cam(msg):
-    global reversing
+    global reversing,isMoving,got_action
     global cam_skip,cam_count
 
     cam_count += 1
     if cam_count%cam_skip != 0:
         return
 
-    if isMoving and not reversing:
+    if isMoving and got_action and not reversing:
         global currInputs
 
         data = msg.data
@@ -95,6 +95,7 @@ def callback_laser(msg):
     global reversing,isMoving
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
+    global got_action
 
     laser_count += 1
     if laser_count % laser_skip != 0:
@@ -111,7 +112,7 @@ def callback_laser(msg):
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
 
     only_look_ahead = True
-    if isMoving and not reversing:
+    if isMoving and got_action and not reversing:
         #print(rangesNum)
         labels = [0,0,0]
         obstacle = False
@@ -193,34 +194,35 @@ def callback_odom(msg):
     global prevPose
     global isMoving,initial_data
 
-    if initial_data:
-        data = msg
-        pose = data.pose.pose # has position and orientation
+    
+    data = msg
+    pose = data.pose.pose # has position and orientation
 
-        x = float(pose.position.x)
-        prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
-        y = float(pose.position.y)
-        prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
-        z = float(pose.position.z)
-        prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
+    x = float(pose.position.x)
+    prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
+    y = float(pose.position.y)
+    prevY =float(prevPose.position.y) if not prevPose==None  else 0.0
+    z = float(pose.position.z)
+    prevZ = float(prevPose.position.z) if not prevPose==None else 0.0
 
-        xo = float(pose.orientation.x)
-        prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
-        yo = float(pose.orientation.y)
-        prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
-        zo = float(pose.orientation.z)
-        prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
-        wo = float(pose.orientation.w)
-        prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
+    xo = float(pose.orientation.x)
+    prevXO = float(prevPose.orientation.x)  if not prevPose==None else 0.0
+    yo = float(pose.orientation.y)
+    prevYO =  float(prevPose.orientation.y) if not prevPose==None else 0.0
+    zo = float(pose.orientation.z)
+    prevZO =  float(prevPose.orientation.z) if not prevPose==None else 0.0
+    wo = float(pose.orientation.w)
+    prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
 
-        tolerance = 0.001
-        if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance
-           and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
-            isMoving = False
-        else:
-            isMoving = True
+    pose_tol = 0.003
+    ori_tol = 0.001
+    if(abs(x - prevX)<pose_tol and abs(y - prevY)<pose_tol and abs(z - prevZ)<pose_tol
+           and abs(xo - prevXO)<ori_tol and abs(yo - prevYO)<ori_tol and abs(zo - prevZO)<ori_tol and abs(wo - prevWO)<ori_tol):
+        isMoving = False
+    else:
+        isMoving = True
 
-        prevPose = data.pose.pose
+    prevPose = data.pose.pose
 
 def callback_path_finish(msg):
     from os import system
@@ -241,10 +243,10 @@ def callback_path_finish(msg):
     cam_count,laser_count = 0,0
 
 def callback_action_status(msg):
-    global isMoving, move_complete
+    global isMoving, move_complete,got_action
     global vel_lin_buffer,vel_ang_buffer
     move_complete = False
-    isMoving = True
+    got_action = True
     #empty both velocity buffers
     vel_lin_buffer,vel_ang_buffer=[],[]
 
@@ -258,7 +260,7 @@ def callback_cmd_vel(msg):
 
 def save_data():
     import time    
-    
+    global got_action
     global currInputs,currLabels,initial_data
     global data_status_pub,sent_input_pub,sent_label_pub
 
@@ -273,13 +275,14 @@ def save_data():
     currInputs=[]
     currLabels=[]
     initial_data = False
+    got_action = False
 
 thumbnail_w = utils.THUMBNAIL_W
 thumbnail_h = utils.THUMBNAIL_H
 
 reversing = False
 isMoving = False
-got_action = False
+got_action = True
 initial_data = True
 move_complete = False
 

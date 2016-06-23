@@ -852,11 +852,12 @@ def callback_data_save_status(msg):
     if data_inputs.shape[0]%hyperparam.batch_size!=0:
         logger.debug('Input count is not a factor of batchsize')
         num_batches = int(data_inputs.shape[0]/hyperparam.batch_size)
-        logger.debug('Deleting %s inputs from total %s',data_inputs.shape[0]-num_batches*hyperparam.batch_size,data_inputs.shape[0])
+	if num_batches > 0:
+            logger.debug('Deleting %s inputs from total %s',data_inputs.shape[0]-num_batches*hyperparam.batch_size,data_inputs.shape[0])
 
-        data_inputs = np.delete(data_inputs,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
-        data_labels = np.delete(data_labels,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
-        logger.debug('Total size after deleting %s',data_inputs.shape[0])
+            data_inputs = np.delete(data_inputs,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
+            data_labels = np.delete(data_labels,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
+            logger.debug('Total size after deleting %s',data_inputs.shape[0])
 
     # for the 1st iteration
     if i_bumped or initial_data==0:

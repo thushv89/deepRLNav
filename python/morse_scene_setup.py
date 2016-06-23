@@ -32,7 +32,7 @@ scan.translate(x=0.275, z=0.252)
 atrv.append(scan)
 scan.properties(Visible_arc = False)
 scan.properties(laser_range = 30.0)
-scan.properties(resolution = 0.2)
+scan.properties(resolution = 1)
 scan.properties(scan_window = 180.0) #angle of laser
 scan.create_laser_arc()
 scan.add_interface('ros', topic='/scan',frame_id="laser", child_frame_id="base_link")
