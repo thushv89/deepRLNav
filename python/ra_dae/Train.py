@@ -245,9 +245,11 @@ def make_model(hparams, restore_data=None,restore_pool=None):
             model.set_episode_count(deeprl_ep)
 
     elif hparams.model_type == 'SDAE':
+        logger.info('CREATING SDAE ...\n')
         model = DLModels.StackedAutoencoderWithSoftmax(layers,rng,hparams)
 
     elif hparams.model_type == 'LogisticRegression':
+        logger.info('CREATING LOGISTIC REGRESSION ...\n')
         model = DLModels.LogisticRegression(layers[0],hparams)
 
     return model
@@ -262,7 +264,7 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
     global logger,logging_level,logging_format
     global last_action,num_bumps,i_bumped
 
-    model.process()
+    model.process(training=False)
     start_time = time.clock()
 
     check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
@@ -303,7 +305,7 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         shared_y = theano.shared(np.asarray(y_tmp))
 
         pre_train_func,finetune_func = model.train_func(
-            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/5.0)
+            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
 
         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
             pre_train_func(p_t_batch)
@@ -415,7 +417,8 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                 train_adaptive_prev,update_pool = model.train_func(
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)), batch_size,last_action)
-                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
                     train_adaptive_prev(p_t_batch)
                     #update_pool(p_t_batch) # dont do this
 
@@ -440,7 +443,8 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                 train_adaptive_prev,_ = model.train_func(
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size,last_action)
-                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
                     train_adaptive_prev(p_t_batch)
                     model.rectify_multi_softmax_layers(last_action)
 
@@ -510,7 +514,20 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
                 p_all.append(p.get_Q())
             policy_Qs.append(p_all)
 
-    assert len(lyr_params)>0 and len(policy_Qs)>0 and len(layer_sizes)>0
+    elif updated_hparam.model_type == 'SDAE':
+        W_tensor,b_tensor,b_prime_tensor = layers[-1].get_params()
+        W,b,b_prime = W_tensor.get_value(borrow=True),b_tensor.get_value(borrow=True),b_prime_tensor.get_value(borrow=True)
+
+        layer_sizes.append(W.shape)
+        lyr_params.append((W,b,b_prime))
+
+        assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
+        logger.debug('W,b,b_prime added as numpy arrays')
+
+    #TODO: Logistic Regression and SDAE peristance of parameters
+
+    if updated_hparam.model_type == 'DeepRL' or updated_hparam.model_type == 'DeepRLMultiSoftmax':
+        assert len(lyr_params)>0 and len(policy_Qs)>0 and len(layer_sizes)>0
 
     file_suffix = 'in'+ str(updated_hparam.in_size) + '_out' + str(updated_hparam.out_size)\
                   + '_type' + updated_hparam.model_type + '_act-'+ hyperparam.activation \
@@ -518,9 +535,12 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
                   + '_batch' + str(updated_hparam.batch_size) + '_hid' + '-'.join([str(h) for h in updated_hparam.init_sizes])\
                   + '_sim' + str(updated_hparam.sim_thresh)
 
+
     pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_Qs,(episode,num_bumps,deeprl_episodes,algo_move_count)),
                 open(dir_suffix + os.sep + "params_"+str(algo_move_count)+ file_suffix + ".pkl", "wb"))
-    pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(algo_move_count)+ file_suffix + '.pkl', 'wb'))
+
+    if updated_hparam.model_type=='DeepRL' or updated_hparam.model_type=='DeepRLMultiSoftmax':
+        pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(algo_move_count)+ file_suffix + '.pkl', 'wb'))
     
 def test(shared_data_file_x,arc,model, model_type):
 
@@ -531,6 +551,8 @@ def test(shared_data_file_x,arc,model, model_type):
         model.process(T.matrix('x'), T.matrix('y'),training=False)
     elif model_type == 'LogisticRegression':
         model.process()
+    elif model_type == 'SDAE':
+        model.process(training=False)
 
     if model_type == 'DeepRL':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
@@ -554,6 +576,11 @@ def test(shared_data_file_x,arc,model, model_type):
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
         probs = np.mean(get_proba_func(last_idx),axis=0)
+    elif model_type == 'SDAE':
+        get_proba_func = model.get_predictions_func(arc,shared_data_file_x, hyperparam.batch_size)
+        last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
+        logger.debug('Last idx: %s',last_idx)
+        probs = np.mean(get_proba_func(last_idx),axis=0)
 
     logger.info('Probs: %s', probs)
 
@@ -564,7 +591,7 @@ def test(shared_data_file_x,arc,model, model_type):
         else:
             action = np.random.randint(0,3)
 
-    if model_type == 'LogisticRegression':
+    if model_type == 'LogisticRegression' or model_type== 'SDAE':
         random_threshold = 0.25
         if np.max(probs)>random_threshold:
             action = np.argmax(probs)
@@ -635,6 +662,8 @@ def run(data_file,prev_data_file):
                            hyperparam.pre_epochs, hyperparam.finetune_epochs, hyperparam.learning_rate, model, hyperparam.model_type)
             elif hyperparam.model_type == 'LogisticRegression':
                 train_logistic_regression(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
+            elif hyperparam.model_type == 'SDAE':
+                train_sdae(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
             else:
                 raise NotImplementedError
 
@@ -660,31 +689,40 @@ def run(data_file,prev_data_file):
             action = test(shared_data_file[0],1,model,hyperparam.model_type)
             algo_move_count += 1
 
-        if persist_every>0 and algo_move_count>0 and do_train and\
-                        last_persisted!=algo_move_count and algo_move_count%persist_every==0:
-            logger.info('[run] Persist parameters & Filters: %s',algo_move_count)
-            if hyperparam.model_type == 'DeepRL' or hyperparam.model_type == 'DeepRLMultiSoftmax':
-                import copy
-                updated_hparams = copy.copy(hyperparam)
-                if hyperparam.model_type:
-                    updated_hparams.hid_sizes = model.get_updated_hid_sizes()
-
-                persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.episode)
-                if visualize_filters:
-                    for layer_idx in range(len(hyperparam.hid_sizes)):
-                        filters = model.visualize_nodes(updated_hparams.learning_rate*2.,75,layer_idx,'sigmoid')
-                        create_image_grid(filters,updated_hparams.aspect_ratio,algo_move_count,layer_idx)
-                last_persisted = algo_move_count
-
     else:
         logger.warning('Incompatible action received. Sending action 1')
         action=1
 
+    # Persisting parameters
+    if persist_every>0 and algo_move_count>0 and do_train and \
+                    last_persisted!=algo_move_count and algo_move_count%persist_every==0:
+
+        logger.info('[run] Persist parameters & Filters: %s',algo_move_count)
+        if hyperparam.model_type == 'DeepRL' or hyperparam.model_type == 'DeepRLMultiSoftmax':
+            import copy
+            updated_hparams = copy.copy(hyperparam)
+            updated_hparams.hid_sizes = model.get_updated_hid_sizes()
+
+            persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.episode)
+            if visualize_filters:
+                for layer_idx in range(len(hyperparam.hid_sizes)):
+                    filters = model.visualize_nodes(updated_hparams.learning_rate*2.,75,layer_idx,'sigmoid')
+                    create_image_grid(filters,updated_hparams.aspect_ratio,algo_move_count,layer_idx)
+
+        if hyperparam.model_type== 'SDAE':
+            persist_parameters(hyperparam,model.layers, None, None, 0)
+            if visualize_filters:
+                for layer_idx in range(len(hyperparam.hid_sizes)):
+                    filters = model.visualize_nodes(hyperparam.learning_rate*2.,75,layer_idx,'sigmoid')
+                    create_image_grid(filters,hyperparam.aspect_ratio,algo_move_count,layer_idx)
+
+        last_persisted = algo_move_count
+
+    # assign last_action
     last_action = action
     logger.info('Last action: %s\n', last_action)
 
-    #logger for number of bumps
-
+    # logger for number of bumps
     if algo_move_count>0 and algo_move_count % bump_count_window == 0:
         logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s',
                      algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep))
@@ -693,13 +731,14 @@ def run(data_file,prev_data_file):
 
     episode += 1
 
-
     # wait till the move complete to publish action
     logger.debug('Waiting for the move to complete')
     while not move_complete:
         True
     logger.debug('Move completed. Checking for bumps')
 
+    # check if obstacle hit
+    # if obstacle hit wait for reverse
     if not hit_obstacle:
         logger.debug('Did not hit an obstacle. Executing action\n')
         action_pub.publish(action)
@@ -762,6 +801,7 @@ def callback_data_save_status(msg):
     global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode,run_mutex
     global hit_obstacle,reversed,move_complete
     global save_images
+    global hyperparam
 
     initial_data = int(msg.data)
     logger.info('Data Received ...')
@@ -769,13 +809,22 @@ def callback_data_save_status(msg):
     label_count = data_labels.shape[0]
     logger.info('currdata (before): %s, %s',data_inputs.shape,data_labels.shape)
     if data_inputs.shape[0] != data_labels.shape[0]:
-        logger.warning('data and label counts are different. correcting')
+        logger.warning('data and label counts are different. Matching')
         if label_count >input_count:
             for _ in range(label_count-input_count):
                 data_labels = np.delete(data_labels,-1,0)
         if label_count < input_count:
             for _ in range(input_count-label_count):
                 data_inputs = np.delete(data_inputs,-1,0)
+
+    if data_inputs.shape[0]%hyperparam.batch_size!=0:
+        logger.debug('Input count is not a factor of batchsize')
+        num_batches = int(data_inputs.shape[0]/hyperparam.batch_size)
+        logger.debug('Deleting %s inputs from total %s',data_inputs.shape[0]-num_batches*hyperparam.batch_size,data_inputs.shape[0])
+
+        data_inputs = np.delete(data_inputs,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
+        data_labels = np.delete(data_labels,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
+        logger.debug('Total size after deleting %s',data_inputs.shape[0])
 
     # for the 1st iteration
     if i_bumped or initial_data==0:
@@ -884,6 +933,8 @@ prev_log_bump_ep = 0
 run_mutex = Lock()
 move_complete = False
 
+hyperparam = None
+
 class HyperParams(object):
 
     def __init__(self):
@@ -894,7 +945,6 @@ class HyperParams(object):
         self.activation = 'sigmoid' #relu/sigmoid/softplus
         self.learning_rate = -1
         self.batch_size = -1
-        self.test_batch_size = -1
 
         # number of batches we use to train the model, because the images at the end are the most important
         # so we get <train_batch_count> batches from the end of the data stream to train
@@ -998,17 +1048,16 @@ if __name__ == '__main__':
         hyperparam.in_size = 7424
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
-        hyperparam.model_type = 'LogisticRegression' # DeepRLMultiSoftmax or LogisticRegression
+        hyperparam.model_type = 'SDAE' # DeepRLMultiSoftmax or LogisticRegression or SDAE
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.1 #0.01 multisoftmax #0.2 logistic
+        hyperparam.learning_rate = 0.01 #0.01 multisoftmax #0.2 logistic
         hyperparam.batch_size = 5
-        hyperparam.test_batch_size = 3
-        hyperparam.train_batch_count = 2
+        #hyperparam.train_batch_count = 2
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [32]
+        hyperparam.hid_sizes = [250]
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 

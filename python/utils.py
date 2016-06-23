@@ -32,7 +32,7 @@ LASER_FREQUENCY = 20
 LASER_POINT_COUNT = 120
 LASER_ANGLE = 120
 
-PREF_FREQUENCY = 5
+PREF_FREQUENCY = 10
 
 #COMMANDS
 GOAL_CANCEL_CMD = "rosservice call /autonomy/path_follower/cancel_request"
