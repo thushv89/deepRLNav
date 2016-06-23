@@ -263,9 +263,10 @@ num_bumps = 0
 def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
     global logger,logging_level,logging_format
     global last_action,num_bumps,i_bumped
+    global time_logger,episode
 
     model.process(training=False)
-    start_time = time.clock()
+
 
     check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
 
@@ -288,9 +289,11 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         shared_y = theano.shared(np.asarray(y_tmp))
         pre_train_func,finetune_func = model.train_func(
             prev_data_file[0], T.cast(shared_y,'int32'))
+        start_time = time.clock()
         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
             pre_train_func(p_t_batch)
             finetune_func(p_t_batch)
+        end_time = time.clock()
 
     if i_bumped:
 
@@ -307,21 +310,26 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         pre_train_func,finetune_func = model.train_func(
             prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
 
+        start_time = time.clock()
         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
             pre_train_func(p_t_batch)
             finetune_func(p_t_batch)
 
-    end_time = time.clock()
+        end_time = time.clock()
+
     logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+    time_logger.info('%s, %.3f',episode,(end_time-start_time))
+
     return
 
 
 def train_logistic_regression(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
     global logger,logging_level,logging_format
     global last_action,num_bumps,i_bumped
+    global time_logger,episode
 
     model.process()
-    start_time = time.clock()
+
 
 
     check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
@@ -345,8 +353,10 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
         shared_y = theano.shared(np.asarray(y_tmp))
         train = model.train_func(
             prev_data_file[0], T.cast(shared_y,'int32'))
+        start_time = time.clock()
         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
             train(p_t_batch)
+        end_time = time.clock()
 
     if i_bumped:
 
@@ -361,22 +371,24 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
         shared_y = theano.shared(np.asarray(y_tmp))
 
         train = model.train_func(
-            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/5.0)
+            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
 
+        start_time = time.clock()
         for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
             train(p_t_batch)
+        end_time = time.clock()
 
-    end_time = time.clock()
     logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+    time_logger.info('%s, %.3f',episode,(end_time-start_time))
     return
 
 
 def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, model_type):
-
+    global episode
     global logger,logging_level,logging_format
-
+    global time_logger
     model.process(T.matrix('x'), T.matrix('y'),training=True)
-    start_time = time.clock()
+
     arc = 0
     if model_type == 'DeepRLMultiSoftmax':
 
@@ -418,11 +430,14 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)), batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+
+                start_time = time.clock()
                 for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
                     train_adaptive_prev(p_t_batch)
                     #update_pool(p_t_batch) # dont do this
 
                     model.rectify_multi_softmax_layers(last_action)
+                end_time = time.clock()
 
             # don't update last_action here, do it in the test
             # we've bumped
@@ -444,15 +459,18 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+                start_time = time.clock()
                 for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
                     train_adaptive_prev(p_t_batch)
                     model.rectify_multi_softmax_layers(last_action)
+                end_time = time.clock()
 
     except StopIteration:
         pass
 
-    end_time = time.clock()
-    logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+
+    logger.info('Time taken for the episode: %10.3f (secs)', (end_time-start_time))
+    time_logger.info('%s, %.3f',episode,(end_time-start_time))
     return
 
 
@@ -544,8 +562,8 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
     
 def test(shared_data_file_x,arc,model, model_type):
 
-    global i_bumped,hyperparam
-    global logger
+    global episode,i_bumped,hyperparam
+    global logger,test_time_logger
 
     if model_type == 'DeepRLMultiSoftmax':
         model.process(T.matrix('x'), T.matrix('y'),training=False)
@@ -558,12 +576,16 @@ def test(shared_data_file_x,arc,model, model_type):
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
+        start_time = time.clock()
         probs = np.mean(get_proba_func(last_idx),axis=0)
+        end_time = time.clock()
+
     elif model_type == 'DeepRLMultiSoftmax':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
         probs = None
+        start_time = time.clock()
         for func in get_proba_func:
             if probs is None:
                 probs = np.mean(func(last_idx),axis=0).reshape(-1,1)
@@ -571,18 +593,28 @@ def test(shared_data_file_x,arc,model, model_type):
                 probs = np.append(probs,np.mean(func(last_idx),axis=0).reshape(-1,1),axis=1)
 
         probs = probs[0]
+        end_time = time.clock()
+
     elif model_type == 'LogisticRegression':
         get_proba_func = model.get_predictions_func(shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
+
+        start_time = time.clock()
         probs = np.mean(get_proba_func(last_idx),axis=0)
+        end_time = time.clock()
+
     elif model_type == 'SDAE':
         get_proba_func = model.get_predictions_func(arc,shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
+
+        start_time = time.clock()
         probs = np.mean(get_proba_func(last_idx),axis=0)
+        end_time = time.clock()
 
     logger.info('Probs: %s', probs)
+    test_time_logger.info('%s, %.3f',episode,(end_time-start_time))
 
     if model_type == 'DeepRL':
         random_threshold = 0.35
@@ -926,6 +958,7 @@ logger = logging.getLogger(__name__)
 dir_suffix = None
 bump_logger = None
 netsize_logger = None
+time_logger,test_time_logger = None,None
 param_logger = None
 
 prev_log_bump_ep = 0
@@ -1048,7 +1081,7 @@ if __name__ == '__main__':
         hyperparam.in_size = 7424
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
-        hyperparam.model_type = 'SDAE' # DeepRLMultiSoftmax or LogisticRegression or SDAE
+        hyperparam.model_type = 'DeepRLMultiSoftmax' # DeepRLMultiSoftmax or LogisticRegression or SDAE
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
         hyperparam.learning_rate = 0.01 #0.01 multisoftmax #0.2 logistic
@@ -1057,7 +1090,7 @@ if __name__ == '__main__':
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [250]
+        hyperparam.hid_sizes = [32]
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
@@ -1139,6 +1172,22 @@ if __name__ == '__main__':
         fh.setLevel(logging.INFO)
         fh.setFormatter(logging.Formatter())
         netsize_logger.addHandler(fh)
+
+    time_logger = logging.getLogger('TrainTimeLogger')
+    time_logger.setLevel(logging.INFO)
+    time_filename = dir_suffix + os.sep + 'train_time_log_train.log'
+    fh = logging.FileHandler(time_filename)
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter())
+    time_logger.addHandler(fh)
+
+    test_time_logger = logging.getLogger('TestTimeLogger')
+    test_time_logger.setLevel(logging.INFO)
+    test_time_filename = dir_suffix + os.sep + 'test_time_log_train.log'
+    fh = logging.FileHandler(test_time_filename)
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter())
+    test_time_logger.addHandler(fh)
 
     #batch_count = 5
     #input_avger = InputAverager(batch_count,batch_size,in_size)
