@@ -148,6 +148,8 @@ def reverse_robot():
     global vel_lin_buffer,vel_ang_buffer,reversing
     global cmd_vel_pub,restored_bump_pub
     reversing = True
+    # make sure robot comes to full stop
+    time.sleep(0.5)
     for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
         lin_vec = Vector3(-l[0],-l[1],-l[2])
         ang_vec = Vector3(-a[0],-a[1],-a[2])

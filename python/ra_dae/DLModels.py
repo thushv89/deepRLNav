@@ -353,7 +353,7 @@ class Softmax(Transformer):
     def get_y_labels(self, arc, x, y, batch_size, transformed_x = identity):
         return self.make_func(x, y, batch_size, self._y, None, transformed_x)
 
-    def get_predictions_func(self, arc, x, y, batch_size, transformed_x = identity):
+    def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
         idx = T.iscalar('idx')
         return theano.function(inputs=[idx], outputs=self.p_y_given_x,
                                givens={
@@ -454,43 +454,56 @@ class Pool(object):
 
 class StackedAutoencoderWithSoftmax(Transformer):
 
-    __slots__ = ['_autoencoder', '_layered_autoencoders', '_combined_objective', '_softmax', 'lam', '_updates', '_givens', 'rng', 'iterations', '_error_log','_reconstruction_log','_valid_error_log']
+    def __init__(self, layers, rng, hparam):
+        super(StackedAutoencoderWithSoftmax,self).__init__(layers, 1, activation=hparam.activation, logger=None)
 
-    def __init__(self, layers, corruption_level, rng, lam, iterations, activation):
-        super(StackedAutoencoderWithSoftmax,self).__init__(layers, 1, activation=activation, logger=None)
+        self.sdae_logger = logging.getLogger('MINC-AE'+ str(random.randint(0,1000)))
+        self.sdae_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.sdae_logger.addHandler(console)
 
-        self._autoencoder = DeepAutoencoder(layers[:-1], corruption_level, rng, activation=activation)
-        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], corruption_level, rng,activation=activation)
+
+        self._autoencoder = DeepAutoencoder(layers[:-1], hparam.corruption_level, rng, activation=hparam.activation,dropout=hparam.dropout)
+        self._layered_autoencoders = [DeepAutoencoder([self.layers[i]], hparam.corruption_level, rng,activation=hparam.activation,dropout=hparam.dropout)
                                        for i, layer in enumerate(self.layers[:-1])] #[:-1] gets all items except last
         #self._softmax = Softmax(layers,iterations)
-        self._softmax = CombinedObjective(layers, corruption_level, rng, lam, iterations,activation=activation)
-        self.lam = lam
-        self.iterations = iterations
+        self._softmax = CombinedObjective(layers, hparam.corruption_level, rng, hparam.lam, hparam.iterations,activation=hparam.activation,dropout=hparam.dropout)
+        self.lam = hparam.lam
+        self.iterations = hparam.iterations
         self.rng = np.random.RandomState(0)
 
         self._error_log = []
         self._reconstruction_log = []
         self._valid_error_log = []
 
-    def process(self, x, y,training):
-        self._x = x
-        self._y = y
+        self.learning_rate = hparam.learning_rate
+        self.batch_size = hparam.batch_size
 
-        self._autoencoder.process(x,y,training=training)
-        self._softmax.process(x,y,training=training)
+
+    def process(self, training):
+        self._x = T.matrix('x')  # data, presented as rasterized images
+        self._y =  T.ivector('y')
+
+        self._autoencoder.process(self._x,self._y,training=training)
+        self._softmax.process(self._x,self._y,single_node_softmax=False, training=training)
 
         for ae in self._layered_autoencoders:
-            ae.process(x, y,training=training)
+            ae.process(self._x, self._y,training=training)
 
-    def train_func(self, arc, learning_rate, x, y, v_x, v_y,batch_size, transformed_x=identity):
+    def train_func(self, x, y, learning_rate=None, transformed_x=identity):
 
-        layer_greedy = [ ae.train_func(arc, learning_rate, x,  y, batch_size, lambda x, j=i: chained_output(self.layers[:j], x)) for i, ae in enumerate(self._layered_autoencoders) ]
-        ae_finetune_func = self._autoencoder.train_func(0, learning_rate, x, y, batch_size)
-        error_func = self.error_func(arc, x, y, batch_size, transformed_x)
-        reconstruction_func = self._autoencoder.validate_func(arc, x, y, batch_size, transformed_x)
+        if learning_rate is None:
+            learning_rate = self.learning_rate
 
-        softmax_train_func = self._softmax.train_func(0,learning_rate,x,y,batch_size)
-        valid_error_func = self.error_func(arc, v_x, v_y, batch_size, transformed_x)
+        layer_greedy = [ ae.train_func(0, learning_rate, x,  y, self.batch_size, lambda x, j=i: chained_output(self.layers[:j], x)) for i, ae in enumerate(self._layered_autoencoders) ]
+        ae_finetune_func = self._autoencoder.train_func(0, learning_rate, x, y, self.batch_size)
+        error_func = self.error_func(0, x, y, self.batch_size, transformed_x)
+        reconstruction_func = self._autoencoder.validate_func(0, x, y, self.batch_size, transformed_x)
+
+        softmax_train_func = self._softmax.train_func(0,learning_rate,x,y,self.batch_size)
+        #valid_error_func = self.error_func(arc, v_x, v_y, batch_size, transformed_x)
         def pre_train(batch_id):
 
             for _ in range(int(self.iterations)):
@@ -500,9 +513,9 @@ class StackedAutoencoderWithSoftmax(Transformer):
 
         def finetune(batch_id):
             softmax_train_func(batch_id)
-            self._valid_error_log.append(valid_error_func(batch_id))
             self._reconstruction_log.append(reconstruction_func(batch_id))
-            return self._valid_error_log[-1]
+            self._error_log.append(error_func(batch_id))
+            self.sdae_logger.debug(self._error_log[-1])
 
         return [pre_train,finetune]
 
@@ -512,11 +525,69 @@ class StackedAutoencoderWithSoftmax(Transformer):
     def error_func(self, arc, x, y, batch_size, transformed_x = identity):
         return self._softmax.error_func(arc, x, y, batch_size)
 
-    def get_y_labels(self, arc, x, y, batch_size, transformed_x = identity):
-        return self.make_func(x, y, batch_size, self._y, None, transformed_x)
+    def check_forward(self, x, y, batch_size):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
 
-    def act_vs_pred_func(self, arc, x, y, batch_size, transformed_x = identity):
-        return self._softmax.act_vs_pred_func(arc, x, y, batch_size, transformed_x)
+        forward_func = theano.function([idx],sym_y,givens={
+            sym_y:y[idx * batch_size : (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1]==0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
+
+    def get_predictions_func(self, arc, x, batch_size,transformed_x = identity):
+        return self._softmax.get_predictions_func(arc, x, batch_size=batch_size,transformed_x=transformed_x)
+
+    def visualize_nodes(self,learning_rate,iterations,layer_idx,activation,use_scan=False):
+        in_size = self.layers[0].W.get_value().shape[0]
+
+        def in_bounds(x):
+            if np.sqrt(np.sum(x**2))>1:
+                return False
+            else:
+                return True
+        if not use_scan:
+            idx = T.iscalar('idx')
+            max_inputs = []
+            for n in range(self.layers[layer_idx].W.get_value().shape[1]):
+                if activation == 'sigmoid':
+                    n_max_input = theano.shared(np.random.rand(in_size)*(1.0/in_size),'max_input')
+                elif activation == 'relu':
+                    n_max_input = theano.shared(0.5 + np.random.rand(in_size)*0.4,'max_input')
+                elif activation == 'softplus':
+                    n_max_input = theano.shared(np.random.rand(in_size)*(1.0/in_size),'max_input')
+                else:
+                    raise NotImplementedError
+
+                h_out = chained_output(self.layers[:layer_idx+1],n_max_input,activation=activation)[idx]
+                theta = [n_max_input]
+                updates = [(param, param + learning_rate * grad) for param,grad in zip(theta,T.grad(h_out,wrt=theta))]
+                max_in_function = theano.function(inputs=[idx],outputs=h_out,updates=updates)
+
+                curr_hout = 0
+                for it in range(iterations):
+                    if in_bounds(n_max_input.get_value()):
+                        curr_hout = max_in_function(n)
+                        if curr_hout>0.999:
+                            break
+                    else:
+                        break
+
+                self.sdae_logger.debug('stopping after %s iteration for %s hidden unit (%2.4f)',it,n,curr_hout)
+                max_in = n_max_input.get_value()
+                max_in = max_in/np.max(max_in)
+                max_inputs.append(max_in)
+        else:
+            raise NotImplementedError
+        return max_inputs
+
 
 class MergeIncrementingAutoencoder(Transformer):
 
@@ -816,7 +887,7 @@ class CombinedObjective(Transformer):
         self.iterations = iterations
         self.cost = None
 
-    def process(self, x, yy,single_node_softmax,training):
+    def process(self, x, yy,single_node_softmax=False,training=False):
         self._x = x
         self._y = yy
 
@@ -853,8 +924,8 @@ class CombinedObjective(Transformer):
     def act_vs_pred_func(self, arc, x, y, batch_size, transformed_x = identity):
         return self._softmax.act_vs_pred_func(arc, x, y, batch_size, transformed_x)
 
-    def get_predictions_func(self, arc, x,y, batch_size, transformed_x = identity):
-        return self._softmax.get_predictions_func(arc, x, y, batch_size, transformed_x)
+    def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
+        return self._softmax.get_predictions_func(arc, x, batch_size, transformed_x)
 
 from Train import HyperParams
 class DeepReinforcementLearningModel(Transformer):
@@ -1299,7 +1370,7 @@ class DeepReinforcementLearningModel(Transformer):
         return self._softmax.act_vs_pred_func(arc, x, y, batch_size, transformed_x)
 
     def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
-        return self._softmax.get_predictions_func(arc, x, None, batch_size, transformed_x)
+        return self._softmax.get_predictions_func(arc, x, batch_size, transformed_x)
 
     def get_param_values_func(self):
         params = []
@@ -1660,3 +1731,75 @@ class MergeIncDAE(Transformer):
 
     def error_func(self, arc, x, y, batch_size, transformed_x = identity):
         return self._softmax.error_func(arc, x, y, batch_size)
+
+class LogisticRegression(object):
+
+    def __init__(self,layer,hparams):
+        self.learning_rate = hparams.learning_rate
+        self.batch_size = hparams.batch_size
+        self.in_size = hparams.in_size
+        self.out_size = hparams.out_size
+
+        self.iterations = hparams.iterations
+
+        self.sym_x,self.sym_y = None,None
+
+        self.W = layer.W
+        self.b = layer.b
+
+        self.p_y_given_x,self.y_pred = None,None
+        self.cost = None
+
+    def process(self):
+        self.sym_x = T.matrix('x')  # data, presented as rasterized images
+        self.sym_y = T.ivector('y')  # labels, presented as 1D vector of [int] labels
+
+        self.p_y_given_x = T.nnet.softmax(T.dot(self.sym_x, self.W) + self.b)
+        self.y_pred = T.argmax(self.p_y_given_x, axis=1)
+        self.cost = -T.mean(T.log(self.p_y_given_x)[T.arange(self.sym_y.shape[0]), self.sym_y])
+
+    def train_func(self,x,y,learning_rate = None):
+        if learning_rate is None:
+            learning_rate = self.learning_rate
+
+        idx = T.iscalar('idx')
+        given = {
+            self.sym_x : x[idx * self.batch_size : (idx + 1) * self.batch_size],
+            self.sym_y : y[idx * self.batch_size : (idx + 1) * self.batch_size]
+        }
+
+        updates = [(self.W, self.W - learning_rate * T.grad(self.cost,wrt=self.W)),
+               (self.b, self.b - learning_rate * T.grad(self.cost,wrt=self.b))]
+
+        train_func = theano.function(inputs=[idx],outputs=self.cost,givens=given,updates=updates)
+
+        def train_batch(batch_id):
+            for _ in range(self.iterations):
+                cost = train_func(batch_id)
+                print "Negative log cost: %.3f"%cost
+        return train_batch
+
+    def check_forward(self, x, y, batch_size):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
+
+        forward_func = theano.function([idx],sym_y,givens={
+            sym_y:y[idx * batch_size : (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1]==0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
+
+    def get_predictions_func(self, x, batch_size):
+        idx = T.iscalar('idx')
+        return theano.function(inputs=[idx], outputs=self.p_y_given_x,
+                               givens={
+                                   self.sym_x : x[idx * batch_size : (idx + 1) * batch_size]
+                               }, updates=None)
+
