@@ -197,8 +197,8 @@ def callback_odom(msg):
     	wo = float(pose.orientation.w)
     	prevWO = float(prevPose.orientation.w) if not prevPose==None  else 0.0
 
-	print "Pose:%s"%np.max([abs(x - prevX),abs(y - prevY),abs(z - prevZ)])
-	print "Orientation:%s\n"%np.max([abs(xo - prevXO),abs(yo - prevYO),abs(zo - prevZO),abs(wo - prevWO)])
+	#print "Pose:%s"%np.max([abs(x - prevX),abs(y - prevY),abs(z - prevZ)])
+	#print "Orientation:%s\n"%np.max([abs(xo - prevXO),abs(yo - prevYO),abs(zo - prevZO),abs(wo - prevWO)])
     	tolerance = 0.001
     	if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance  and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
 	    isMoving = False
