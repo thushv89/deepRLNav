@@ -34,12 +34,21 @@ class ContinuousState(Controller):
     __slots__ = ['learning_rate', 'discount_rate', 'prev_state', 'prev_action', 'q', 'start_time', 'action_log','rl_logger']
 
 
-    def __init__(self, learning_rate=0.5, discount_rate=0.9, time_limit=1,q_vals=None):
+    def __init__(self, learning_rate=0.5, discount_rate=0.9, time_limit=1,
+                 q_vals=None, gps=None, prev_state=None, prev_action=None):
         self.learning_rate = learning_rate
         self.discount_rate = discount_rate
 
-        self.prev_state = None
-        self.prev_action = None
+        if prev_state is None:
+            self.prev_state = None
+        else:
+            self.prev_state = prev_state
+
+        if prev_action is None:
+            self.prev_action = None
+        else:
+            self.prev_action = prev_action
+
         self.prev_change = None
 
         self.prev_time = 0
@@ -60,7 +69,11 @@ class ContinuousState(Controller):
         console.setFormatter(logging.Formatter(logging_format))
         console.setLevel(logging_level)
         self.rl_logger.addHandler(console)
-        self.gps = {}
+
+        if gps is None:
+            self.gps = {}
+        else:
+            self.gps = gps
 
     def move(self, i, data, funcs,layer_idx):
 
@@ -78,19 +91,23 @@ class ContinuousState(Controller):
         gp_fit_frequency = 10
 
         err_t = data['curr_error']
+        self.rl_logger.debug("e_t: %s",data['curr_error'])
+        self.rl_logger.debug("e_t-1: %s\n",data['valid_error_log'][-6:-1])
+
         err_t_minus_1 = np.mean(data['valid_error_log'][-6:-1])
 
-        self.rl_logger.info("\nRUNNING RL for LAYER: %s, EPISODE: %s",layer_idx,i)
+        self.rl_logger.info("RUNNING RL for LAYER: %s, EPISODE: %s\n",layer_idx,i)
 
         #if we haven't completed 30 iterations, keep pooling
         if i <=q_calc_thresh:
+            self.rl_logger.info('Less than the Q calculation threshold. Pooling? %s',pooling)
             if pooling:
                 funcs['pool'](1)
             return
 
         state = (data['r_15'], data['neuron_balance'][layer_idx], data['mea_15'])
-        if verbose:
-            self.rl_logger.debug('Current state %.3f, %.3f, %.3f' % (data['r_15'], data['neuron_balance'][layer_idx], data['mea_15']))
+
+        self.rl_logger.debug('Current state %.3f, %.3f, %.3f' % (data['r_15'], data['neuron_balance'][layer_idx], data['mea_15']))
 
         err_diff = err_t - err_t_minus_1
         curr_err = err_t
@@ -207,19 +224,19 @@ class ContinuousState(Controller):
                 # method signature: amount, to_merge, to_inc
                 # introducing division by two to reduce the impact
                 to_move /= 2.
-                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](data['pool_relevant'], to_move, 0,layer_idx)
+                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](1, to_move, 0,layer_idx)
             elif action == Action.increment:
-                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](data['pool_relevant'], 0, to_move,layer_idx)
+                self.add_idx,self.rem_idx = funcs['merge_increment_pool'](1, 0, to_move,layer_idx)
 
         self.prev_action = action
         self.prev_state = state
         self.prev_change = int(to_move*data['initial_size'][layer_idx])
-
+        self.rl_logger.info('\n')
     def get_current_action_change(self):
         return str(self.prev_action),self.prev_change
 
-    def get_Q(self):
-        return self.q
+    def get_policy_info(self):
+        return self.q,self.gps,self.prev_state,self.prev_action
 
     def end(self):
         return [{'name': 'q_state.json', 'json': json.dumps({str(k):{str(tup): value for tup, value in v.items()} for k,v in self.q.items()})}]
