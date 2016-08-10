@@ -65,11 +65,18 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
         logger.info('CREATING LAYERS ...\n')
     # layer 0
     if layer_params is not None:
-        W,b,b_prime = layer_params[0]
+        W, b, b_prime = layer_params[0]
         logger.info('Restoring (i=0) W: %s',W.shape)
         logger.info('Restoring (i=0) b: %s',b.shape)
         logger.info('Restoring (i=0) b_prime: %s',b_prime.shape)
         logger.info('Restoring (i=0) init_size: %s \n', init_sizes[0])
+        if np.isnan(W).any():
+            logger.error('Nan detected in the 0th layer W (%s)',W.shape)
+        if np.isnan(b).any():
+            logger.error('Nan detected in the 0th layer b (%s)', b.shape)
+        if np.isnan(b_prime).any():
+            logger.error('Nan detected in the 0th layer b_prime (%s)', b_prime.shape)
+
         layers.append(NNLayer.Layer(hparams.in_size, W.shape[1], False, W, b, b_prime,init_sizes[0]))
     else:
         nn_layer = NNLayer.Layer(hparams.in_size, hparams.hid_sizes[0], False, None, None, None,None)
@@ -85,21 +92,29 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
         if i==0: continue
         if layer_params is not None:
             W,b,b_prime = layer_params[i]
-            logger.info('Restoring (i=',i,') W: %s',W.shape)
-            logger.info('Restoring (i=',i,') b: %s',b.shape)
-            logger.info('Restoring (i=',i,') b_prime: %s',b_prime.shape)
-            logger.info('Restoring (i=',i,') init_size: %s \n', init_sizes[i])
+            logger.info('Restoring (i=%s) W: %s',i,W.shape)
+            logger.info('Restoring (i=%s) b: %s',i,b.shape)
+            logger.info('Restoring (i=%s) b_prime: %s',i,b_prime.shape)
+            logger.info('Restoring (i=%s) init_size: %s \n', i,init_sizes[i])
+
+            if np.isnan(W).any():
+                logger.error('Nan detected in the %sth layer W (%s)', i, W.shape)
+            if np.isnan(b).any():
+                logger.error('Nan detected in the %sth layer b (%s)', i, b.shape)
+            if np.isnan(b_prime).any():
+                logger.error('Nan detected in the %sth layer b_prime (%s)', i, b_prime.shape)
+
             layers.append(NNLayer.Layer(W.shape[0], W.shape[1], False, W, b, b_prime,init_sizes[i]))
         else:
             nn_layer = NNLayer.Layer(hparams.hid_sizes[i-1], hparams.hid_sizes[i], False, None, None, None,None)
             layers.append(nn_layer)
-            logger.info('Creating (i=',i,') W: %s',nn_layer.W.get_value().shape)
-            logger.info('Creating (i=',i,') b: %s',nn_layer.b.get_value().shape)
-            logger.info('Creating (i=',i,') b_prime: %s',nn_layer.b_prime.get_value().shape)
-            logger.info('Creating (i=',i,') init_size: %s\n', nn_layer.initial_size)
+            logger.info('Creating (i=%s) W: %s', i, nn_layer.W.get_value().shape)
+            logger.info('Creating (i=%s) b: %s', i, nn_layer.b.get_value().shape)
+            logger.info('Creating (i=%s) b_prime: %s', i, nn_layer.b_prime.get_value().shape)
+            logger.info('Creating (i=%s) init_size: %s\n', i, nn_layer.initial_size)
 
     if layer_params is not None:
-        if hparams.model_type=='DeepRL' or hparams.model_type=='SDAE':
+        if hparams.model_type=='SDAE':
             W,b,b_prime = layer_params[-1]
             logger.info('Restoring (i=-1) W: %s',W.shape)
             logger.info('Restoring (i=-1) b: %s',b.shape)
@@ -108,22 +123,55 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
 
             layers.append(NNLayer.Layer(hparams.hid_sizes[-1], hparams.out_size, False, W, b, b_prime,init_sizes[-1]))
 
+        if hparams.model_type=='SDAEMultiSoftmax':
+            out_layers = []
+            W_str, b_str, b_prime_str, init_size_str = '', '', '', ''
+            for init, softmax in zip(init_sizes[-1], layer_params[-1]):
+                W, b, b_prime = softmax
+                W_str += str(W.shape) + ' '
+                b_str += str(b.shape) + ' '
+                b_prime_str += str(b_prime.shape) + ' '
+                init_size_str += str(init) + ' '
+
+                logger.info('Restoring (i=-1)(%s) W: %s', len(out_layers), W_str)
+                logger.info('Restoring (i=-1)(%s) b: %s', len(out_layers), b_str)
+                logger.info('Restoring (i=-1)(%s) b_prime: %s', len(out_layers), b_prime_str)
+                logger.info('Restoring (i=-1)(%s) init_size: %s\n', len(out_layers), init_size_str)
+
+                if np.isnan(W).any():
+                    logger.error('Nan detected in the -1th layer W(%s)', W.shape)
+                if np.isnan(b).any():
+                    logger.error('Nan detected in the -1th layer b(%s)', b.shape)
+                if np.isnan(b_prime).any():
+                    logger.error('Nan detected in the -1th layer b_prime(%s)', b_prime.shape)
+
+                out_layers.append(NNLayer.Layer(hparams.hid_sizes[-1], 1, False, W, b, b_prime, init))
+
+            layers.append(out_layers)
+
         elif hparams.model_type=='DeepRLMultiSoftmax':
             out_layers = []
             W_str,b_str,b_prime_str,init_size_str = '','','',''
             for init,softmax in zip(init_sizes[-1],layer_params[-1]):
-                W,b,b_prime = softmax
-                W_str += str(W.shape)+ ' '
-                b_str += str(b.shape)+ ' '
-                b_prime_str += str(b_prime.shape)+ ' '
+                W, b, b_prime = softmax
+                W_str += str(W.shape) + ' '
+                b_str += str(b.shape) + ' '
+                b_prime_str += str(b_prime.shape) + ' '
                 init_size_str += str(init) + ' '
 
-                logger.info('Restoring (i=-1)(',len(out_layers),') W: %s',W_str)
-                logger.info('Restoring (i=-1)(',len(out_layers),') b: %s',b_str)
-                logger.info('Restoring (i=-1)(',len(out_layers),') b_prime: %s',b_prime_str)
-                logger.info('Restoring (i=-1)(',len(out_layers),') init_size: %s\n', init_size_str)
+                logger.info('Restoring (i=-1)(%s) W: %s', len(out_layers), W_str)
+                logger.info('Restoring (i=-1)(%s) b: %s', len(out_layers), b_str)
+                logger.info('Restoring (i=-1)(%s) b_prime: %s', len(out_layers), b_prime_str)
+                logger.info('Restoring (i=-1)(%s) init_size: %s\n', len(out_layers), init_size_str)
 
-                out_layers.append(NNLayer.Layer(hparams.hid_sizes[-1], 1, False, W, b, b_prime,init))
+                if np.isnan(W).any():
+                    logger.error('Nan detected in the -1th layer W(%s)', W.shape)
+                if np.isnan(b).any():
+                    logger.error('Nan detected in the -1th layer b(%s)', b.shape)
+                if np.isnan(b_prime).any():
+                    logger.error('Nan detected in the -1th layer b_prime(%s)', b_prime.shape)
+
+                out_layers.append(NNLayer.Layer(hparams.hid_sizes[-1], 1, False, W, b, b_prime, init))
 
             layers.append(out_layers)
 
@@ -136,9 +184,10 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
             logger.info('Creating (i=-1) init_size: %s \n', nn_layer.initial_size)
 
             layers.append(nn_layer)
-        elif hparams.model_type == 'DeepRLMultiSoftmax':
+
+        elif hparams.model_type == 'DeepRLMultiSoftmax' or hparams.model_type == 'SDAEMultiSoftmax':
             out_layers = []
-            W_str,b_str,b_prime_str,init_size_str = '','','',''
+            W_str, b_str, b_prime_str, init_size_str = '', '', '', ''
             for o in range(hparams.out_size):
                 nn_layer = NNLayer.Layer(hparams.hid_sizes[-1], 1, False, None, None, None,None)
                 W_str += str(nn_layer.W.get_value().shape) + ' '
@@ -158,33 +207,43 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
     return layers
 
 
-def make_model(hparams, restore_data=None,restore_pool=None):
+def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
     # restoredata should have layer
     rng = T.shared_randomstreams.RandomStreams(0)
     deeprl_ep = 0
-    global episode,num_bumps,deeprl_episodes,algo_move_count
+    global episode,num_bumps,algo_move_count
     global logger
 
     # if initially starting (not loading previous data
     if restore_data is not None:
-        layer_params,init_sizes,rl_q_vals,(ep,nb,deeprl_ep,algo_moves) = restore_data
+        layer_params,init_sizes,policy_infos,(ep,nb,deeprl_time,algo_moves) = restore_data
         episode = ep
         num_bumps = nb
         algo_move_count = algo_moves
 
-        if hparams.model_type == 'DeepRL':
-            policies = [RLPolicies.ContinuousState(q_vals=q) for q in rl_q_vals]
-            assert len(policies) == len(hparams.hid_sizes)
-            logger.debug('All policies are correctly restored for DeepRL\n')
-            layers = make_layers(hparams, layer_params, init_sizes)
+        if hparams.model_type == 'DeepRLMultiSoftmax':
+            # REMEMBER: There are policies <hidden layer * number of action> policies
+            policies = [[RLPolicies.ContinuousState(q_vals=lyr_policy[0],gps=lyr_policy[1],
+                                                    prev_state=lyr_policy[2],prev_action=lyr_policy[3])
+                         for lyr_policy in net_policy] for net_policy in policy_infos]
 
-        elif hparams.model_type == 'DeepRLMultiSoftmax':
-            policies = [[RLPolicies.ContinuousState(q_vals=q) for q in rl_q_1] for rl_q_1 in rl_q_vals]
             # check if all policies are loaded
             assert len(policies)*len(policies[0]) == hparams.out_size*len(hparams.hid_sizes)
             logger.debug('All policies are correctly restored for DeepRLMultiSoftmax\n')
+            logger.debug('\nPolicy Summaries')
+            logger.debug('===============================================\n')
+            for i,net_policy in enumerate(policies):
+                logger.debug('Policies for Action %s',i)
+                for j,lyr_policy in enumerate(net_policy):
+                    logger.debug('\tPolicies for Layer %s',j)
+                    logger.debug('\t\tPolicy Q length: %s',len(lyr_policy.q))
+                    logger.debug('\t\tPolicy GP data point count: %s',len(lyr_policy.gps))
+                    logger.debug('\t\tPolicy Prev State: %s',lyr_policy.prev_state)
+                    logger.debug('\t\tPolicy Prev Action: %s', lyr_policy.prev_action)
+                logger.debug('\n')
             layers = make_layers(hparams, layer_params, init_sizes)
-
+        elif hparams.model_type == 'SDAEMultiSoftmax':
+            layers = make_layers(hparams, layer_params, init_sizes)
         elif hparams.model_type == 'LogisticRegression':
             W,b,b_prime = layer_params[0]
             layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, W, b, b_prime,init_sizes[0])]
@@ -193,60 +252,71 @@ def make_model(hparams, restore_data=None,restore_pool=None):
             layers = make_layers(hparams,layer_params,init_sizes)
 
     else:
-        if hparams.model_type == 'DeepRL':
-            policies = [RLPolicies.ContinuousState() for _ in range(len(hparams.hid_sizes))]
-            assert len(policies) == len(hparams.hid_sizes)
-            logger.debug('All policies are correctly created for DeepRL\n')
-            layers = make_layers(hparams)
-
-        elif hparams.model_type == 'DeepRLMultiSoftmax':
+        if hparams.model_type == 'DeepRLMultiSoftmax':
             policies = [[RLPolicies.ContinuousState() for _ in range(len(hparams.hid_sizes))] for __ in range(hparams.out_size)]
             assert len(policies)*len(policies[0]) == hparams.out_size*len(hparams.hid_sizes)
             logger.debug('All policies are correctly created for DeepRLMultiSoftmax\n')
             layers = make_layers(hparams)
-
+        elif hparams.model_type == 'SDAEMultiSoftmax':
+            layers = make_layers(hparams)
         elif hparams.model_type == 'LogisticRegression':
             layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, None, None, None,None)]
-
         elif hparams.model_type == 'SDAE':
             layers = make_layers(hparams)
 
-    if hparams.model_type == 'DeepRL':
-        model = DLModels.DeepReinforcementLearningModel(layers, rng, policies, hparams, hparams.out_size)
-        model.set_research_params(pool_with_not_bump=pool_with_not_bump,test_mode=False)
-
-        if restore_pool is not None:
-            pool,diff_pool = restore_pool
-            p_data = theano.shared(np.asarray(pool[0], dtype=theano.config.floatX), 'pool' )
-            p_data_y = theano.shared(np.asarray(pool[1], dtype=theano.config.floatX), 'pool_y')
-
-            dp_data = theano.shared(np.asarray(diff_pool[0], dtype=theano.config.floatX), 'diff_pool' )
-            dp_data_y = theano.shared(np.asarray(diff_pool[1], dtype=theano.config.floatX), 'diff_pool_y')
-
-            model.restore_pool(hparams.batch_size,p_data,p_data_y,dp_data,dp_data_y)
-            model.set_episode_count(deeprl_ep)
-
-    elif hparams.model_type == 'DeepRLMultiSoftmax':
+    if hparams.model_type == 'DeepRLMultiSoftmax':
         logger.info("CREATING DEEPRL MULTI SOFTMAX NET ...\n")
         model = DLModels.DeepReinforcementLearningModelMultiSoftmax(layers, rng, policies, hparams, hparams.out_size)
 
         if restore_pool is not None:
             X,Y,DX,DY = [],[],[],[]
+            size_list,pos_list,dsize_list,dpos_list = [],[],[],[]
 
             for pools in restore_pool:
-                pool,diff_pool = pools
+                (pool,pool_size,pool_pos),(bump_pool,bump_pool_size,bump_pool_pos) = pools
                 X.append(theano.shared(np.asarray(pool[0], dtype=theano.config.floatX), 'pool' ))
                 Y.append(theano.shared(np.asarray(pool[1], dtype=theano.config.floatX), 'pool_y'))
+                size_list.append(pool_size)
+                pos_list.append(pool_pos)
 
-                DX.append(theano.shared(np.asarray(diff_pool[0], dtype=theano.config.floatX), 'diff_pool' ))
-                DY.append(theano.shared(np.asarray(diff_pool[1], dtype=theano.config.floatX), 'diff_pool_y'))
+                DX.append(theano.shared(np.asarray(bump_pool[0], dtype=theano.config.floatX), 'bump_pool' ))
+                DY.append(theano.shared(np.asarray(bump_pool[1], dtype=theano.config.floatX), 'bump_pool_y'))
+                dsize_list.append(bump_pool_size)
+                dpos_list.append(bump_pool_pos)
 
-            model.restore_pool(hparams.batch_size,X,Y,DX,DY)
-            model.set_episode_count(deeprl_ep)
+                logger.debug('Restoring pools (data count, size, pos): %s,%s,%s (recent) %s,%s,%s (bump)',pool[0].shape[0],pool_size,pool_pos,
+                             bump_pool[0].shape[0],bump_pool_size,bump_pool_pos)
+                if pool_size>0:
+                    logger.debug('\tPool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)',np.min(pool[0]),np.max(pool[0]),np.min(pool[1]),np.max(pool[1]))
+                if bump_pool_size>0:
+                    logger.debug('\tBump Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)\n', np.min(pool[0]), np.max(pool[0]),
+                             np.min(pool[1]), np.max(pool[1]))
+
+            model.restore_pool(hparams.batch_size,X,Y,size_list,pos_list,DX,DY,dsize_list,dpos_list)
+            model.set_time_for_deeprls(deeprl_time)
+
+        if restore_logs is not None:
+            logger.debug('Restoring logs ....')
+            for log in restore_logs:
+                logger.debug('\tReconstruction Log length: %s',len(log[0]))
+                logger.debug('\tdata: %s\n', log[0][-6:-1])
+                logger.debug('\tError Log length: %s', len(log[1]))
+                logger.debug('\tdata: %s\n', log[1][-6:-1])
+                logger.debug('\tValid Error Log length: %s', len(log[2]))
+                logger.debug('\tdata: %s\n', log[2][-6:-1])
+                logger.debug('\tNeuron balance Log length: %s', len(log[3]))
+                logger.debug('\tdata: %s\n', log[3][-6:-1])
+            model.set_logs(restore_logs)
+
+    #TODO SDAEMultisoftmax Restore Pool
 
     elif hparams.model_type == 'SDAE':
         logger.info('CREATING SDAE ...\n')
-        model = DLModels.StackedAutoencoderWithSoftmax(layers,rng,hparams)
+        model = DLModels.StackedAutoencoderWithSoftmax(layers,rng,hparams,hparams.out_size)
+
+    elif hparams.model_type == 'SDAEMultiSoftmax':
+        logger.info('CREATING SDAE MULTI SOFTMAX ...\n')
+        model = DLModels.SDAEMultiSoftmax(layers,rng,hparams)
 
     elif hparams.model_type == 'LogisticRegression':
         logger.info('CREATING LOGISTIC REGRESSION ...\n')
@@ -259,6 +329,95 @@ last_action = 1 # this is important for DeepRLMultiLogreg
 i_bumped = False
 num_bumps = 0
 
+def train_sdae_multi_softmax(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
+    global episode
+    global logger, logging_level, logging_format
+    global time_logger
+    global bumped_prev_ep
+
+    model.process(training=True)
+
+    check_fwd = model.check_forward(0, data_file[0], data_file[1], batch_size)
+
+    try:
+        from collections import Counter
+        global last_action, episode, i_bumped, num_bumps
+
+        i_bumped = False
+
+        for t_batch in range(int(ceil(data_file[2] * 1.0 / batch_size))):
+            # if we should go forward #no training though
+            # we always train from previous batches
+            if not check_fwd(t_batch):
+                i_bumped = True
+                num_bumps += 1
+                break
+
+        if not i_bumped:
+            logger.info('Didnt bump. yay!!!')
+            logger.debug('I took correct action %s', last_action)
+
+            y_tmp = []
+            for i in range(prev_data_file[0].get_value().shape[0]):
+                y_tmp.append(1.)
+
+            pretrain_prev, finetune_prev = model.train_func(
+                prev_data_file[0], theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1,1)),
+                learning_rate, batch_size, last_action
+            )
+            # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+
+            start_time = time.clock()
+            pool_choice = random.choice(
+                range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+            logger.debug('Pooling choice: %s', pool_choice)
+            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                                   int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+                pretrain_prev(p_t_batch)
+                if pool_choice == p_t_batch:
+
+                    logger.debug('Bumped previous episode? %s', bumped_prev_ep)
+                    finetune_prev(p_t_batch, True)
+                    logger.debug('Adding %s batch to pool', p_t_batch)
+                else:
+                    finetune_prev(p_t_batch, False)
+
+            end_time = time.clock()
+
+        if i_bumped:
+
+            logger.info('Bumped after taking action %s', last_action)
+
+            y_tmp = []
+            for i in range(prev_data_file[0].get_value().shape[0]):
+                y_tmp.append(0.)
+
+            pretrain_prev,finetune_prev = model.train_func(
+                prev_data_file[0], theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1,1)),
+                learning_rate, batch_size, last_action
+            )
+
+            start_time = time.clock()
+            pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                                              int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+            logger.debug('Pooling choice: %s', pool_choice)
+            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                                   int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+                pretrain_prev(p_t_batch)
+                if pool_choice == p_t_batch:
+                    finetune_prev(p_t_batch, True)
+                    logger.debug('Adding %s batch to pool and bump_pool', p_t_batch)
+                else:
+                    finetune_prev(p_t_batch, False)
+
+            end_time = time.clock()
+
+    except StopIteration:
+        pass
+
+    logger.info('Time taken for the episode: %10.3f (secs)', (end_time - start_time))
+    time_logger.info('%s, %.3f', episode, (end_time - start_time))
+    return
 
 def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
     global logger,logging_level,logging_format
@@ -283,16 +442,27 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         logger.debug('I took correct action %s',last_action)
 
         y_tmp = []
+        y_vec = [0.,0.,0.]
+        y_vec[last_action] = 1.
         for i in range(prev_data_file[0].get_value().shape[0]):
-            y_tmp.append(last_action)
+            y_tmp.append(y_vec)
 
-        shared_y = theano.shared(np.asarray(y_tmp))
-        pre_train_func,finetune_func = model.train_func(
-            prev_data_file[0], T.cast(shared_y,'int32'))
+        shared_y = theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX))
+        pre_train_func, finetune_func = model.train_func(prev_data_file[0], shared_y)
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+
+        pool_choice = random.choice(
+            range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+        logger.debug('Pooling choice: %s', pool_choice)
+
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             pre_train_func(p_t_batch)
-            finetune_func(p_t_batch)
+            if pool_choice == p_t_batch:
+                finetune_func(p_t_batch, True)
+                logger.debug('Adding %s batch to pool', p_t_batch)
+            else:
+                finetune_func(p_t_batch, False)
+
         end_time = time.clock()
 
     if i_bumped:
@@ -300,24 +470,30 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         logger.info('Bumped after taking action %s', last_action)
 
         y_tmp = []
+        y_vec = [0.,0.,0.]
         pos_actions =  [0,1,2]
         pos_actions.remove(int(last_action))
+        r_action = random.choice(pos_actions)
+        y_vec[r_action] = 1.
         for i in range(prev_data_file[0].get_value().shape[0]):
-            y_tmp.append(random.choice(pos_actions))
+            y_tmp.append(y_vec)
+        logger.info('Randomly picked potential correct action %s',r_action)
+        shared_y = theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX))
 
-        shared_y = theano.shared(np.asarray(y_tmp))
-
-        pre_train_func,finetune_func = model.train_func(
-            prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
+        pre_train_func,finetune_func = model.train_func(prev_data_file[0],shared_y,learning_rate=learning_rate/2.0)
 
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+        #pool_choice = random.choice(
+        #    range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+        #logger.debug('Pooling choice: %s', pool_choice)
+
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             pre_train_func(p_t_batch)
-            finetune_func(p_t_batch)
+            finetune_func(p_t_batch, False)
 
         end_time = time.clock()
 
-    logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+    logger.info('Time taken for the episode: %10.3f (s)', (end_time-start_time))
     time_logger.info('%s, %.3f',episode,(end_time-start_time))
 
     return
@@ -354,7 +530,7 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
         train = model.train_func(
             prev_data_file[0], T.cast(shared_y,'int32'))
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train(p_t_batch)
         end_time = time.clock()
 
@@ -374,7 +550,7 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
             prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
 
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train(p_t_batch)
         end_time = time.clock()
 
@@ -387,15 +563,14 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
     global episode
     global logger,logging_level,logging_format
     global time_logger
+    global bumped_prev_ep
     model.process(T.matrix('x'), T.matrix('y'),training=True)
 
     arc = 0
-    if model_type == 'DeepRLMultiSoftmax':
-
-        #import scipy # use ifyou wanna check images are received correctly
+    #import scipy # use ifyou wanna check images are received correctly
         #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
         #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
-        check_fwd = model.check_forward(arc, data_file[0], data_file[1], batch_size)
+    check_fwd = model.check_forward(arc, data_file[0], data_file[1], batch_size)
 
     logger.info('\nTRANING DATA ...\n')
     try:
@@ -426,15 +601,22 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                 y_tmp = []
                 for i in range(prev_data_file[0].get_value().shape[0]):
                     y_tmp.append(1.)
-                train_adaptive_prev,update_pool = model.train_func(
+                train_adaptive_prev = model.train_func(
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)), batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
                 start_time = time.clock()
+                pool_choice = random.choice(range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))))
+                logger.debug('Pooling choice: %s',pool_choice)
                 for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
-                    train_adaptive_prev(p_t_batch)
-                    #update_pool(p_t_batch) # dont do this
+                    if pool_choice == p_t_batch:
+
+                        logger.debug('Bumped previous episode? %s',bumped_prev_ep)
+                        train_adaptive_prev(p_t_batch,True,bumped_prev_ep)
+                        logger.debug('Adding %s batch to pool',p_t_batch)
+                    else:
+                        train_adaptive_prev(p_t_batch,False, False)
 
                     model.rectify_multi_softmax_layers(last_action)
                 end_time = time.clock()
@@ -455,14 +637,24 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
 
                 y = np.asarray(y_tmp).reshape(-1,1)
 
-                train_adaptive_prev,_ = model.train_func(
+                train_adaptive_prev = model.train_func(
                     arc, learning_rate, prev_data_file[0],
                     theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
                 start_time = time.clock()
-                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
-                    train_adaptive_prev(p_t_batch)
+                pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                                                  int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+                logger.debug('Pooling choice: %s', pool_choice)
+                for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                                       int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+                    if pool_choice == p_t_batch:
+                        train_adaptive_prev(p_t_batch, True, True)
+                        logger.debug('Adding %s batch to pool and bump_pool', p_t_batch)
+                    else:
+                        train_adaptive_prev(p_t_batch, False, False)
+
                     model.rectify_multi_softmax_layers(last_action)
+
                 end_time = time.clock()
 
     except StopIteration:
@@ -474,14 +666,14 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
     return
 
 
-def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
+def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time):
     import pickle
     global episode, num_bumps, algo_move_count # number of processed batches
     global dir_suffix,logger
 
     lyr_params = []
     layer_sizes = []
-    policy_Qs = []
+    policy_infos = []
 
     for l in layers[:-1]:
         W_tensor,b_tensor,b_prime_tensor = l.get_params()
@@ -495,20 +687,9 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
         assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
         logger.debug('W,b,b_prime added as numpy arrays')
 
-    if updated_hparam.model_type == 'DeepRL':
-        W_tensor,b_tensor,b_prime_tensor = layers[-1].get_params()
-        W,b,b_prime = W_tensor.get_value(borrow=True),b_tensor.get_value(borrow=True),b_prime_tensor.get_value(borrow=True)
 
-        layer_sizes.append(W.shape)
-        lyr_params.append((W,b,b_prime))
 
-        assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
-        logger.debug('W,b,b_prime added as numpy arrays')
-
-        for p in policies:
-            policy_Qs.append(p.get_Q())
-
-    elif updated_hparam.model_type == 'DeepRLMultiSoftmax':
+    if updated_hparam.model_type == 'DeepRLMultiSoftmax':
         multi_softmax_layer_params = []
         softmax_layer_sizes = []
         for softmax in layers[-1]:
@@ -526,11 +707,33 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
         lyr_params.append(multi_softmax_layer_params)
         layer_sizes.append(softmax_layer_sizes)
 
-        for drl_pol in policies:
+        for net_pol in all_policies:
             p_all = []
-            for p in drl_pol:
-                p_all.append(p.get_Q())
-            policy_Qs.append(p_all)
+            for lyr_p in net_pol:
+                p_all.append(lyr_p.get_policy_info())
+            policy_infos.append(p_all)
+
+        logger.debug('Time info of deeprls: %s',deeprl_time)
+
+    elif updated_hparam.model_type == 'SDAEMultiSoftmax':
+        multi_softmax_layer_params = []
+        softmax_layer_sizes = []
+        for softmax in layers[-1]:
+            W_soft_tensor, b_soft_tensor, b_prime_soft_tensor = softmax.get_params()
+            W_soft, b_soft, b_prime_soft = W_soft_tensor.get_value(borrow=True), b_soft_tensor.get_value(
+                borrow=True), b_prime_soft_tensor.get_value(borrow=True)
+            multi_softmax_layer_params.append([W_soft, b_soft, b_prime_soft])
+            softmax_layer_sizes.append(W_soft.shape)
+
+            logger.debug('W type_soft: %s', type(W_soft))
+            logger.debug('b type_soft: %s', type(b_soft))
+            logger.debug('b_prime_soft type: %s', type(b_prime_soft))
+            assert isinstance(W_soft, np.ndarray) and isinstance(b_soft, np.ndarray) and isinstance(b_prime_soft,
+                                                                                                    np.ndarray)
+            logger.debug('W,b,b_prime (softmax) added as numpy arrays')
+
+        lyr_params.append(multi_softmax_layer_params)
+        layer_sizes.append(softmax_layer_sizes)
 
     elif updated_hparam.model_type == 'SDAE':
         W_tensor,b_tensor,b_prime_tensor = layers[-1].get_params()
@@ -542,10 +745,10 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
         assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
         logger.debug('W,b,b_prime added as numpy arrays')
 
-    #TODO: Logistic Regression and SDAE peristance of parameters
-
+    # TODO: Logistic Regression and SDAE peristence of parameters
+    # TODO: SDAE Multisoftmax persistence of parameters
     if updated_hparam.model_type == 'DeepRL' or updated_hparam.model_type == 'DeepRLMultiSoftmax':
-        assert len(lyr_params)>0 and len(policy_Qs)>0 and len(layer_sizes)>0
+        assert len(lyr_params)>0 and len(policy_infos)>0 and len(layer_sizes)>0
 
     file_suffix = 'in'+ str(updated_hparam.in_size) + '_out' + str(updated_hparam.out_size)\
                   + '_type' + updated_hparam.model_type + '_act-'+ hyperparam.activation \
@@ -554,12 +757,36 @@ def persist_parameters(updated_hparam,layers,policies,pools,deeprl_episodes):
                   + '_sim' + str(updated_hparam.sim_thresh)
 
 
-    pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_Qs,(episode,num_bumps,deeprl_episodes,algo_move_count)),
+    pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_infos, (episode,num_bumps,deeprl_time,algo_move_count)),
                 open(dir_suffix + os.sep + "params_"+str(algo_move_count)+ file_suffix + ".pkl", "wb"))
 
     if updated_hparam.model_type=='DeepRL' or updated_hparam.model_type=='DeepRLMultiSoftmax':
+        for pool in pools:
+            (p,p_s,p_pos),(bp,bp_s,bp_pos) = pool
+            logger.debug('Pools persisting (data_count,size,position): %s,%s,%s (recent) %s,%s,%s (bump)',p[0].shape[0],p_s,p_pos,
+                         bp[0].shape[0],bp_s,bp_pos)
+            if p_s > 0:
+                logger.debug('\t Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)',np.min(p[0]),np.max(p[0]),np.min(p[1]),np.max(p[1]))
+            if bp_s > 0:
+                logger.debug('\t Bump Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)\n', np.min(bp[0]), np.max(bp[0]),
+                         np.min(bp[1]), np.max(bp[1]))
+
         pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(algo_move_count)+ file_suffix + '.pkl', 'wb'))
-    
+
+    if updated_hparam.model_type == 'DeepRLMultiSoftmax':
+        logger.debug('Persisting logs ...')
+        for log in logs:
+            logger.debug('\tReconstruction log length: %s',len(log[0]))
+            logger.debug('\tdata: %s\n',log[0][-6:-1])
+            logger.debug('\tError log length: %s', len(log[1]))
+            logger.debug('\tdata: %s\n', log[1][-6:-1])
+            logger.debug('\tValid error log length: %s', len(log[2]))
+            logger.debug('\tdata: %s\n', log[2][-6:-1])
+            logger.debug('\tNeuron balance log length: %s', len(log[3]))
+            logger.debug('\tdata: %s\n', log[3][-6:-1])
+
+        pickle.dump(logs,open(dir_suffix + os.sep + 'logs_'+str(algo_move_count)+file_suffix+'.pkl','wb'))
+
 def test(shared_data_file_x,arc,model, model_type):
 
     global episode,i_bumped,hyperparam
@@ -567,20 +794,14 @@ def test(shared_data_file_x,arc,model, model_type):
 
     if model_type == 'DeepRLMultiSoftmax':
         model.process(T.matrix('x'), T.matrix('y'),training=False)
+    elif model_type == 'SDAEMultiSoftmax':
+        model.process(training=False)
     elif model_type == 'LogisticRegression':
         model.process()
     elif model_type == 'SDAE':
         model.process(training=False)
 
-    if model_type == 'DeepRL':
-        get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
-        last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
-        logger.debug('Last idx: %s',last_idx)
-        start_time = time.clock()
-        probs = np.mean(get_proba_func(last_idx),axis=0)
-        end_time = time.clock()
-
-    elif model_type == 'DeepRLMultiSoftmax':
+    if model_type == 'DeepRLMultiSoftmax' or model_type=='SDAEMultiSoftmax':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
@@ -616,46 +837,51 @@ def test(shared_data_file_x,arc,model, model_type):
     logger.info('Probs: %s', probs)
     test_time_logger.info('%s, %.3f',episode,(end_time-start_time))
 
-    if model_type == 'DeepRL':
-        random_threshold = 0.35
-        if np.max(probs)>random_threshold:
-            action = np.argmax(probs)
-        else:
-            action = np.random.randint(0,3)
-
     if model_type == 'LogisticRegression' or model_type== 'SDAE':
         random_threshold = 0.25
-        if np.max(probs)>random_threshold:
-            action = np.argmax(probs)
+        certain_threshold = 0.5
+
+    elif model_type == 'DeepRLMultiSoftmax' or 'SDAEMultiSoftmax':
+        random_threshold = 0.5 * (1. - hyperparam.dropout) * 0.9
+        certain_threshold = 0.95
+
+    idx_above_thresh = np.where(probs>random_threshold)[0]
+    is_all_below_low_thresh = np.all(probs<random_threshold)
+    logger.debug('Indices above random threshold: %s',idx_above_thresh)
+    logger.debug('All probas below low rand threshold: %s',is_all_below_low_thresh)
+    if len(idx_above_thresh)==1:
+        action = np.argmax(probs)
+        logger.info('Action got (Max): %s \n', action)
+    elif len(idx_above_thresh)>1:
+        idx_certain = np.where(probs>certain_threshold)[0]
+        if set(idx_above_thresh)==set(idx_certain):
+            rand_iterations = np.random.randint(1, 10)
+            for _ in range(rand_iterations):
+                action = random.choice(idx_above_thresh)
+            logger.info('Action got (Random - Certain): %s \n', action)
+
         else:
-            action = np.random.randint(0,3)
+            probs_updated = [probs[k] if k in idx_above_thresh else 100 for k in [0,1,2]]
+            action = np.argmin(probs_updated)
+            logger.info('Action got (Min above thresh): %s \n', action)
+    else:
+        rand_iterations = np.random.randint(1,10)
+        for _ in range(rand_iterations):
+            action = random.choice([0,1,2])
+        logger.info('Action got (Random - Uncertain): %s \n', action)
 
-    elif model_type == 'DeepRLMultiSoftmax':
-        #random_threshold = 0.9
-        rand_threshold = 0.5 * (1.-hyperparam.dropout) * 0.9
-        idx_above_thresh = np.where(probs>rand_threshold)[0]
-        is_all_below_low_thresh = np.all(probs<rand_threshold)
-        logger.debug('Indices above random threshold: %s',idx_above_thresh)
-        logger.debug('All probas below low rand threshold: %s',is_all_below_low_thresh)
-        if len(idx_above_thresh)<=1 and not is_all_below_low_thresh:
-            action = np.argmax(probs)
-            logger.info('Action got: %s \n', action)
-        else:
-
-            action = random.choice(idx_above_thresh) if len(idx_above_thresh)>0 else random.choice([0,1,2])
-            logger.info('Action got (random): %s \n', action)
-
-    return action
+    return action,probs[action]
 
 fwd_threshold = 0.5
 
 def run(data_file,prev_data_file):
-    global hyperparam,episode,algo_move_count,i_bumped,bump_episode,last_action,\
-        fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters
+    global hyperparam,episode,algo_move_count,i_bumped,bumped_prev_ep,bump_episode,last_action,\
+        fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters,last_visualized,visualize_every
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
     global initial_run
-    global  hit_obstacle,reversed,move_complete
+    global hit_obstacle,reversed,move_complete
+    global weighted_bumps,last_act_prob
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
@@ -668,7 +894,7 @@ def run(data_file,prev_data_file):
         logger.debug('Very first run after Termination\n')
         last_action = 1
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
-        action = test(shared_data_file[0],1,model,hyperparam.model_type)
+        action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
 
         algo_move_count += 1
         initial_run = False
@@ -678,8 +904,10 @@ def run(data_file,prev_data_file):
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
 
         logger.info("Input size: %s", shared_data_file[0].eval().shape)
+        logger.debug("\t %.2f (min) %.2f (max)",np.min(data_file[0]),np.max(data_file[0]))
         logger.info("Label size: %s", shared_data_file[1].eval().shape)
-        logger.info("Count: %s", shared_data_file[2])
+        logger.debug('\t %.1f (min) %.1f (max)',np.min(data_file[1]),np.max(data_file[1]))
+        logger.info("Count: %s\n", shared_data_file[2])
 
         if prev_data_file is not None:
             prev_shared_data_file = make_shared(prev_data_file[0],prev_data_file[1],'prev_inputs',False)
@@ -696,29 +924,36 @@ def run(data_file,prev_data_file):
                 train_logistic_regression(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
             elif hyperparam.model_type == 'SDAE':
                 train_sdae(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
+            elif hyperparam.model_type == 'SDAEMultiSoftmax':
+                train_sdae_multi_softmax(hyperparam.batch_size, shared_data_file, prev_shared_data_file, hyperparam.learning_rate,
+                           model, hyperparam.model_type)
             else:
                 raise NotImplementedError
 
-
-            if hyperparam.model_type == 'DeepRLMultiSoftmax' or hyperparam.model_type == 'DeepRL':
+            if hyperparam.model_type == 'DeepRLMultiSoftmax':
                 layer_out_size_str = str(episode)+',' + str(algo_move_count)+','
                 for l in model.layers[:-1]:
                     layer_out_size_str += str(l.current_out_size)+','
 
                 netsize_logger.info(layer_out_size_str)
+
             # if i_bumped, current data has the part that went ahead and bumped (we discard this data)
             # if i_bumped, we need to get the prediction with previous data instead of feeding current data
             if not i_bumped:
                 logger.info('Did not bump, so predicting with current data\n')
-                action = test(shared_data_file[0],1,model,hyperparam.model_type)
+                action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
             else:
                 logger.info('Bumped, so predicting with previous data\n')
-                action = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
+                action,prob = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
+                logger.info('Weighted bump: %.2f (current)', last_act_prob)
+                weighted_bumps += last_act_prob
+                logger.info('Total weighted bumps: %.2f\n',weighted_bumps)
 
             algo_move_count += 1
 
         elif shared_data_file and shared_data_file[2]>0 and not do_train:
-            action = test(shared_data_file[0],1,model,hyperparam.model_type)
+            action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
+
             algo_move_count += 1
 
     else:
@@ -730,36 +965,47 @@ def run(data_file,prev_data_file):
                     last_persisted!=algo_move_count and algo_move_count%persist_every==0:
 
         logger.info('[run] Persist parameters & Filters: %s',algo_move_count)
-        if hyperparam.model_type == 'DeepRL' or hyperparam.model_type == 'DeepRLMultiSoftmax':
+        if hyperparam.model_type == 'DeepRLMultiSoftmax':
             import copy
             updated_hparams = copy.copy(hyperparam)
             updated_hparams.hid_sizes = model.get_updated_hid_sizes()
-
-            persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.episode)
-            if visualize_filters:
-                for layer_idx in range(len(hyperparam.hid_sizes)):
-                    filters = model.visualize_nodes(updated_hparams.learning_rate*2.,75,layer_idx,'sigmoid')
-                    create_image_grid(filters,updated_hparams.aspect_ratio,algo_move_count,layer_idx)
+            persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.get_logs(), model.get_time_for_deeprls())
 
         if hyperparam.model_type== 'SDAE':
-            persist_parameters(hyperparam,model.layers, None, None, 0)
-            if visualize_filters:
-                for layer_idx in range(len(hyperparam.hid_sizes)):
-                    filters = model.visualize_nodes(hyperparam.learning_rate*2.,75,layer_idx,'sigmoid')
-                    create_image_grid(filters,hyperparam.aspect_ratio,algo_move_count,layer_idx)
+            persist_parameters(hyperparam,model.layers, None, None, None, None)
 
         last_persisted = algo_move_count
 
+    if visualize_filters and algo_move_count>0 and visualize_every>0 and do_train and \
+                    last_visualized!=algo_move_count and algo_move_count%visualize_every==0:
+        if hyperparam.model_type == 'DeepRLMultiSoftmax':
+            for layer_idx in range(len(hyperparam.hid_sizes)):
+                filters = model.visualize_nodes(hyperparam.learning_rate * 2., 75, layer_idx, 'sigmoid')
+                create_image_grid(filters, hyperparam.aspect_ratio, algo_move_count, layer_idx)
+
+        if hyperparam.model_type == 'SDAE':
+            for layer_idx in range(len(hyperparam.hid_sizes)):
+                filters = model.visualize_nodes(hyperparam.learning_rate * 2., 75, layer_idx, 'sigmoid')
+                create_image_grid(filters, hyperparam.aspect_ratio, algo_move_count, layer_idx)
+
+        if hyperparam.model_type == 'SDAEMultisoftmax':
+            raise NotImplementedError
+
+        last_visualized = algo_move_count
+
     # assign last_action
     last_action = action
+    last_act_prob = prob
+    bumped_prev_ep = i_bumped
     logger.info('Last action: %s\n', last_action)
 
     # logger for number of bumps
     if algo_move_count>0 and algo_move_count % bump_count_window == 0:
-        logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s',
-                     algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep))
-        bump_logger.info('%s,%s',algo_move_count,(num_bumps-prev_log_bump_ep))
+        logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s, Weighted Bumps, %s',
+                     algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep),weighted_bumps)
+        bump_logger.info('%s,%s,%s',algo_move_count,(num_bumps-prev_log_bump_ep),weighted_bumps)
         prev_log_bump_ep = num_bumps
+        weighted_bumps = 0.0
 
     episode += 1
 
@@ -787,8 +1033,6 @@ def run(data_file,prev_data_file):
         # we do not publish if the while loop terminated of timeout
         if temp_i<100:
             action_pub.publish(action)
-
-
 
 
 def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
@@ -930,6 +1174,7 @@ def callback_initial_run(msg):
     global  initial_run
     initial_run = True
 
+bumped_prev_ep = False # this is to fill bump pool in deeprl
 data_inputs = None
 data_labels = None
 action_pub = None
@@ -937,9 +1182,14 @@ action_pub = None
 hyperparam = None
 episode=0
 algo_move_count = 0
+weighted_bumps = 0
+last_act_prob = 0
 
 do_train = 1
 persist_every = 10
+visualize_every = 200
+last_visualized = 0
+
 bump_count_window = 25
 restore_last = None
 last_persisted = 0
@@ -968,6 +1218,7 @@ run_mutex = Lock()
 move_complete = False
 
 hyperparam = None
+test_mode = False
 
 class HyperParams(object):
 
@@ -997,6 +1248,7 @@ class HyperParams(object):
         self.multi_softmax = False
         self.dropout = 0
         self.action_frequency = 5
+        self.pooling = True
 
     def print_hyperparams(self):
         global logger
@@ -1021,7 +1273,7 @@ class HyperParams(object):
 
 if __name__ == '__main__':
 
-    global restore_last, do_train, persist_every, bump_count_window
+    global restore_last, do_train, persist_every, bump_count_window, visualize_every
     global logger, logging_level, logging_format, bump_logger
 
     import getopt
@@ -1037,9 +1289,9 @@ if __name__ == '__main__':
 
     try:
         opts,args = getopt.getopt(
-            sys.argv[1:],"",['restore_model=',"restore_pool=","train=","persist_window=","bump_window="])
+            sys.argv[1:],"",['restore_model=',"restore_pools=","restore_logs=","train=","persist_window=","bump_window=","visualize_window="])
     except getopt.GetoptError as err:
-        logger.error('<filename>.py --restore_model=<filename> --restore_pool=<filename> --train=<0or1> --persist_window=<int> --bump_window=<int>')
+        logger.error('<filename>.py --restore_model=<filename> --restore_pools=<filename> --restore_logs=<filename> --train=<0or1> --persist_window=<int> --bump_window=<int>')
         logger.critical(err)
         sys.exit(2)
 
@@ -1051,9 +1303,12 @@ if __name__ == '__main__':
             if opt == '--restore_model':
                 logger.info('--restore_model: %s',arg)
                 restore_model = arg
-            if opt == '--restore_pool':
+            if opt == '--restore_pools':
                 logger.info('--restore_pool: %s',arg)
                 restore_pool_fn = arg
+            if opt == '--restore_logs':
+                logger.info('--restore_logs: %s',arg)
+                restore_logs_fn = arg
             if opt == '--train':
                 logger.info('--train: %s',bool(int(arg)))
                 do_train = bool(int(arg))
@@ -1063,35 +1318,43 @@ if __name__ == '__main__':
             if opt == '--bump_window':
                 logger.info('--bump_window: %s',arg)
                 bump_count_window = int(arg)
+            if opt == '--visualize_window':
+                logger.info('--visualize_window: %s',arg)
+                visualize_every = int(arg)
+                if visualize_every==0:
+                    visualize_filters = False
+
 
     theano.config.floatX = 'float32'
 
     hyperparam = HyperParams()
 
-    if restore_model is not None and restore_pool_fn is not None:
+    if restore_model is not None and restore_pool_fn is not None and restore_logs_fn is not None:
         restore_data = pickle.load(open(restore_model, "rb"))
         restore_pool = pickle.load(open(restore_pool_fn, "rb"))
+        restore_logs = pickle.load(open(restore_logs_fn,'rb'))
         hyperparam = restore_data[0]
         restore_model = restore_data[1:]
 
         logger.info('\nRESTORING FROM PERSISTED DATA ...\n')
         hyperparam.print_hyperparams()
 
-        model = make_model(hyperparam,restore_data=restore_model,restore_pool=restore_pool)
+        model = make_model(hyperparam,restore_data=restore_model,restore_pool=restore_pool,restore_logs=restore_logs)
     else:
         hyperparam.in_size = 7424
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
-        hyperparam.model_type = 'DeepRLMultiSoftmax' # DeepRLMultiSoftmax or LogisticRegression or SDAE
+        # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
+        hyperparam.model_type = 'SDAEMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.01 #0.01 multisoftmax #0.2 logistic
+        hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
         hyperparam.batch_size = 5
         #hyperparam.train_batch_count = 2
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [32]
+        hyperparam.hid_sizes = [256,192,128]
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
@@ -1105,6 +1368,8 @@ if __name__ == '__main__':
         hyperparam.sim_thresh = 0.94
         hyperparam.multi_softmax = True
         hyperparam.action_frequency = 5
+
+        hyperparam.pooling = True
 
         hyperparam.print_hyperparams()
         model = make_model(hyperparam,restore_data=None,restore_pool=None)

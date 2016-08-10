@@ -18,7 +18,7 @@ class Layer(object):
 
         if zero:
             self.W = theano.shared(np.zeros((input_size, output_size), dtype=theano.config.floatX))
-        elif W!=None:
+        elif W is not None:
             self.W = theano.shared(W)
         else:
             rng = np.random.RandomState(0)
@@ -28,8 +28,8 @@ class Layer(object):
             # randomly initalise weights
             self.W = theano.shared(initial, 'W_' + self.name)
 
-        self.b = theano.shared(b if b != None else np.zeros(output_size, dtype=theano.config.floatX), 'b_' + self.name)
-        self.b_prime = theano.shared(b_prime if b_prime != None else np.zeros(input_size, dtype=theano.config.floatX), 'b\'_' + self.name)
+        self.b = theano.shared(b if b is not None else np.zeros(output_size, dtype=theano.config.floatX), 'b_' + self.name)
+        self.b_prime = theano.shared(b_prime if b_prime is not None else np.zeros(input_size, dtype=theano.config.floatX), 'b\'_' + self.name)
         self.initial_size = (input_size, output_size) if init_sizes is None else init_sizes
         self.activation = None
         self.current_out_size = self.initial_size[1]

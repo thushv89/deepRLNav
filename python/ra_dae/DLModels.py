@@ -12,7 +12,7 @@ import sys
 import logging
 import random
 
-logging_level = logging.INFO
+logging_level = logging.DEBUG
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
@@ -77,6 +77,7 @@ class Transformer(object):
         :param update: how to get to output from input
         :return: Theano function
         '''
+
         idx = T.iscalar('idx')
         given = {
             self._x : transformed_x(x[idx * batch_size : (idx + 1) * batch_size]),
@@ -210,6 +211,7 @@ class DeepAutoencoder(Transformer):
         return None
 
     def train_func(self, _, learning_rate, x, y, batch_size, transformed_x=identity):
+
         updates = [(param, param - learning_rate*grad) for param, grad in zip(self.theta, T.grad(self.cost,wrt=self.theta))]
         return self.make_func(x=x,y=y,batch_size=batch_size,output=self.cost, updates=updates, transformed_x=transformed_x)
 
@@ -304,6 +306,7 @@ class Softmax(Transformer):
         #self._errors = T.mean(T.neq(self.results,y))
         if single_node_softmax:
             if self.dropout <= 0:
+                self.softmax_logger.debug('Single Node Softmax selected ...')
                 self.p_y_given_x = chained_output(self.layers, self._x)
             else:
                 self.softmax_logger.debug('Dropout selected')
@@ -319,11 +322,13 @@ class Softmax(Transformer):
                 else:
                     self.p_y_given_x = chained_output(self.layers, self._x,dropout=self.dropout,training=self.training)
 
+            self.softmax_logger.debug('Setting binary_crossentropy as the cost function ...\n')
             self.cost_vector = T.nnet.binary_crossentropy(self.p_y_given_x,self._y)
             #-log(self.p_y_given_x)[T.eq(y,1.)]
         else:
             self.p_y_given_x = T.nnet.softmax(chained_output(self.layers, x))
-            self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+            #self.cost_vector = -T.log(self.p_y_given_x)[T.arange(y.shape[0]), y]
+            self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x, y)
 
         #self.cost_vector = T.nnet.categorical_crossentropy(self.p_y_given_x,y)
         #self.cost_vector = T.sum(T.sqrt((self.p_y_given_x-y)**2),axis=1)
@@ -363,12 +368,14 @@ class Pool(object):
 
     #theano.config.compute_test_value = 'warn'
     ''' A ring buffer (Acts as a Queue) '''
-    __slots__ = ['size', 'max_size', 'num_classes','position', 'data', 'data_y', '_update','pool_logger']
+    __slots__ = ['size', 'max_size', 'row_size','num_classes','position', 'data', 'data_y', '_update','pool_logger']
 
-    def __init__(self, row_size, max_size,num_classes):
+    def __init__(self, row_size, max_size,num_classes=None):
         self.size = 0
         self.max_size = max_size
         self.position = 0
+        self.row_size = row_size
+        self.num_classes = num_classes
 
         self.pool_logger = logging.getLogger('Pool'+ str(random.randint(0,1000)))
         self.pool_logger.setLevel(logging_level)
@@ -378,10 +385,20 @@ class Pool(object):
         self.pool_logger.addHandler(console)
 
         self.data = theano.shared(np.empty((max_size, row_size), dtype=theano.config.floatX), 'pool' )
-        self.data_y = theano.shared(np.empty((max_size,num_classes), dtype=theano.config.floatX), 'pool_y')
+
+        if num_classes is not None:
+            self.pool_logger.debug("Setting up pool_y with size: (%s,%s)",max_size,num_classes)
+            self.data_y = theano.shared(np.empty((max_size,num_classes), dtype=theano.config.floatX), 'pool_y')
+        else:
+            self.pool_logger.debug("Setting up pool_y with size: (%s,)", max_size)
+            self.data_y = theano.shared(np.empty((max_size,), dtype=theano.config.floatX), 'pool_y')
 
         x = T.matrix('new_data')
-        y = T.matrix('new_data_y')
+        if num_classes is not None:
+            y = T.matrix('new_data_y')
+        else:
+            y = T.vector('new_data_y')
+
         pos = T.iscalar('update_index')
 
         # update statement to add new data from the position of the last data point
@@ -446,18 +463,27 @@ class Pool(object):
         self.size = min(self.size + x.shape[0], self.max_size)
         self.position = (self.position + x.shape[0]) % self.max_size
 
-    def restore_pool(self,batch_size,x,y):
-        self.add_from_shared(0,batch_size,x,y)
+    def restore_pool(self,batch_size,x,y,size,position):
+        self.size = size
+        self.position = position
+        for i in range(size//batch_size):
+            self.add_from_shared(i,batch_size,x,y)
 
     def get_np_data(self):
-        return self.data.get_value(),self.data_y.get_value()
+        if self.size==0:
+            return np.empty((self.max_size, self.row_size), dtype=theano.config.floatX), \
+                    np.empty((self.max_size,), dtype=theano.config.floatX)
+        if self.size<self.max_size:
+            return self.data.eval()[:self.size,:],self.data_y.eval()[:self.size]
+        else:
+            return self.data.eval(), self.data_y.eval()
 
 class StackedAutoencoderWithSoftmax(Transformer):
 
-    def __init__(self, layers, rng, hparam):
+    def __init__(self, layers, rng, hparam, num_classes=None):
         super(StackedAutoencoderWithSoftmax,self).__init__(layers, 1, activation=hparam.activation, logger=None)
 
-        self.sdae_logger = logging.getLogger('MINC-AE'+ str(random.randint(0,1000)))
+        self.sdae_logger = logging.getLogger('SDAE'+ str(random.randint(0,1000)))
         self.sdae_logger.setLevel(logging_level)
         console = logging.StreamHandler(sys.stdout)
         console.setFormatter(logging.Formatter(logging_format))
@@ -480,22 +506,40 @@ class StackedAutoencoderWithSoftmax(Transformer):
 
         self.learning_rate = hparam.learning_rate
         self.batch_size = hparam.batch_size
+        self.pooling = hparam.pooling
+        self.action_frequency = hparam.action_frequency
+        self.episode = 0
 
+        self.num_classes = num_classes
+        self.single_node_softmax = False
+
+        if self.pooling:
+            self._pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes=num_classes)
+
+    def set_research_params(self, **params):
+        self.sdae_logger.debug('RETRIEVING RESEARCH PARAMETERS\n')
+        self.sdae_logger.debug(params)
+
+        if 'single_node_softmax' in params:
+            self.single_node_softmax = params['single_node_softmax']
 
     def process(self, training):
         self._x = T.matrix('x')  # data, presented as rasterized images
-        self._y =  T.ivector('y')
+        self._y = T.matrix('y')
 
         self._autoencoder.process(self._x,self._y,training=training)
-        self._softmax.process(self._x,self._y,single_node_softmax=False, training=training)
+        self._softmax.process(self._x,self._y,single_node_softmax=self.single_node_softmax, training=training)
 
         for ae in self._layered_autoencoders:
             ae.process(self._x, self._y,training=training)
 
     def train_func(self, x, y, learning_rate=None, transformed_x=identity):
-
+	
         if learning_rate is None:
             learning_rate = self.learning_rate
+	
+        if self.pooling:
+            train_func_pool = self._softmax.train_func(0, learning_rate, self._pool.data,self._pool.data_y, self.batch_size)
 
         layer_greedy = [ ae.train_func(0, learning_rate, x,  y, self.batch_size, lambda x, j=i: chained_output(self.layers[:j], x)) for i, ae in enumerate(self._layered_autoencoders) ]
         ae_finetune_func = self._autoencoder.train_func(0, learning_rate, x, y, self.batch_size)
@@ -511,11 +555,26 @@ class StackedAutoencoderWithSoftmax(Transformer):
                     layer_greedy[i](int(batch_id))
                 pre_cost = ae_finetune_func(batch_id)
 
-        def finetune(batch_id):
+        def finetune(batch_id,add_to_pool=True):
+            if self.pooling:
+
+                if add_to_pool:
+                    self.sdae_logger.debug('Adding batch %s to Pool',batch_id)
+                    self._pool.add_from_shared(batch_id, self.batch_size, x, y)
+                if self.episode % self.action_frequency == 0:
+                    self.sdae_logger.info('TRAINING WITH POOL (SHUFFLED) OF SIZE %s \n', int(self._pool.size))
+                    pool_indexes = self._pool.as_size(int(self._pool.size), self.batch_size)
+                    np.random.shuffle(pool_indexes)
+                    px, py = self._pool.get_np_data()
+                    print "Pool X:%s, Y:%s" % (px.shape, py.shape)
+                    for i in pool_indexes:
+                        train_func_pool(i)
+
             softmax_train_func(batch_id)
             self._reconstruction_log.append(reconstruction_func(batch_id))
             self._error_log.append(error_func(batch_id))
             self.sdae_logger.debug(self._error_log[-1])
+            self.episode += 1
 
         return [pre_train,finetune]
 
@@ -588,6 +647,69 @@ class StackedAutoencoderWithSoftmax(Transformer):
             raise NotImplementedError
         return max_inputs
 
+class SDAEMultiSoftmax(Transformer):
+
+    def __init__(self, layers, rng, hparam):
+
+        self._rng = rng
+        self.sdaems_logger = logging.getLogger('SDAE-MS'+ str(random.randint(0,1000)))
+        self.sdaems_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.sdaems_logger.addHandler(console)
+
+        self.sdaems_logger.info('BUILDING MULTI SOFTMAX LAYERS ...\n')
+        self.sdaems_logger.debug('Creating 1 node softmax layers per each action')
+
+        self.sdae_set = []
+        for i in range(hparam.out_size):
+            self.sdaems_logger.debug('\tSoftmax layer for action %s', i)
+            single_sdae = []
+            for l in layers[:-1]:
+                single_sdae.append(l)
+            single_sdae.append(layers[-1][i])
+            self.sdae_set.append(
+                StackedAutoencoderWithSoftmax(single_sdae,self._rng,hparam,num_classes=1)
+            )
+
+            self.sdae_set[-1].set_research_params(single_node_softmax=True)
+
+    def process(self, training):
+        for sdae in self.sdae_set:
+            sdae.process(training)
+
+    def train_func(self, x, y, learning_rate, batch_size, sdae_id, apply_x=identity):
+        return self.sdae_set[sdae_id].train_func(x,y,learning_rate)
+
+    def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
+        funcs = []
+        for sdae in self.sdae_set:
+            tmp = sdae.get_predictions_func(arc, x, batch_size, transformed_x)
+            funcs.append(tmp)
+        return funcs
+
+    def check_forward(self, arc, x, y, batch_size, transformed_x=identity):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
+
+        forward_func = theano.function([idx], sym_y, givens={
+            sym_y: y[idx * batch_size: (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1] == 0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
+
+    #TODO SDAEMultisoftmax set and get POOL
+
+    def visualize_nodes(self,learning_rate,iterations,layer_idx,use_scan=False):
+        return self.sdae_set[0].visualize_nodes(learning_rate,iterations,layer_idx,use_scan)
 
 class MergeIncrementingAutoencoder(Transformer):
 
@@ -731,7 +853,6 @@ class MergeIncrementingAutoencoder(Transformer):
             # number of nodes to merge or increment
             merge_count = int(merge_percentage * self.layers[layer_idx].initial_size[1])
             inc_count = int(inc_percentage * self.layers[layer_idx].initial_size[1])
-
 
             self.minc_logger.debug("RETREIVING HYPER PARAMETERS OF Layer %s \n", layer_idx)
             self.minc_logger.debug("Layer weights (Transpose): %s",layer_weights.shape)
@@ -950,8 +1071,11 @@ class DeepReinforcementLearningModel(Transformer):
         # _pool : has all the data points
         # _hard_pool: has data points only that are above average reconstruction error
         self._pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
-        self._hard_pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
+        #self._hard_pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
         self._diff_pool = Pool(layers[0].initial_size[0], hparam.ft_pool_size,num_classes)
+
+        # this pool is to store correct actions and inputs for a point where robot bumped before
+        self._bump_pool = Pool(layers[0].initial_size[0], hparam.r_pool_size,num_classes)
 
         self._rng = rng
         self.corruption_levels = hparam.corruption_level
@@ -972,9 +1096,9 @@ class DeepReinforcementLearningModel(Transformer):
         self.episode = 0
         self.mean_batch_pool = []
 
-        self.pool_with_not_bump = True
         self.single_node_softmax = False
         self.test_mode = False
+        self.pool_different = False
 
         self.action_frequency = hparam.action_frequency
         self.action_iteration = 0
@@ -983,8 +1107,6 @@ class DeepReinforcementLearningModel(Transformer):
         self.deeprl_logger.debug('RETRIEVING RESEARCH PARAMETERS\n')
         self.deeprl_logger.debug(params)
 
-        if 'pool_with_not_bump' in params:
-            self.pool_with_not_bump = params['pool_with_not_bump']
         if 'single_node_softmax' in params:
             self.single_node_softmax = params['single_node_softmax']
         if 'test_mode' in params:
@@ -993,9 +1115,32 @@ class DeepReinforcementLearningModel(Transformer):
     def set_episode_count(self,val):
         self.episode = val
 
-    def restore_pool(self,batch_size,x,y,dx,dy):
-        self._pool.restore_pool(batch_size,x,y)
-        self._diff_pool.restore_pool(batch_size,dx,dy)
+    def set_action_iteration(self,act_iterations):
+        self.action_iteration = act_iterations
+
+    def restore_pool(self,batch_size,x,y, size, pos, dx,dy, dsize, dpos):
+        if size>0:
+            self._pool.restore_pool(batch_size,x,y,size,pos)
+        if dsize>0:
+            self._bump_pool.restore_pool(batch_size,dx,dy,dsize,dpos)
+        self.deeprl_logger.debug('Restoring pools ...')
+        self.deeprl_logger.debug('\tpool: %s (size) %s (position)',self._pool.size,self._pool.position)
+        self.deeprl_logger.debug('\tbump_pool: %s (size) %s (position)', self._bump_pool.size, self._bump_pool.position)
+
+    def get_pool_data(self):
+        px,py = self._pool.get_np_data()
+        bpx,bpy = self._bump_pool.get_np_data()
+        self.deeprl_logger.debug('Returning pool data to main for persisting ...')
+
+        if self._pool.size > 0:
+            self.deeprl_logger.debug('\t Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)', np.min(px), np.max(px),
+                         np.min(py), np.max(py))
+        if self._bump_pool.size > 0:
+            self.deeprl_logger.debug('\t Bump Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)\n', np.min(bpx), np.max(bpx),
+                         np.min(bpy), np.max(bpy))
+
+        return (self._pool.get_np_data(),self._pool.size,self._pool.position),\
+               (self._bump_pool.get_np_data(),self._bump_pool.size,self._bump_pool.position)
 
     def get_updated_hid_sizes(self):
         new_hid_sizes = []
@@ -1143,17 +1288,18 @@ class DeepReinforcementLearningModel(Transformer):
 
         reconstruction_func = self._autoencoder.validate_func(arc, x, y, batch_size, apply_x)
         error_func = self.error_func(arc, x, y, batch_size, apply_x)
-        valid_error_func = self.error_func(arc,x,y, batch_size, apply_x)
+        #valid_error_func = self.error_func(arc,x,y, batch_size, apply_x)
 
-        merge_inc_func_batch = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, x, y)
+        #merge_inc_func_batch = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, x, y)
         merge_inc_func_pool = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, self._pool.data, self._pool.data_y)
-        merge_inc_func_hard_pool = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, self._hard_pool.data, self._hard_pool.data_y)
+        #merge_inc_func_hard_pool = self._merge_increment.merge_inc_func(learning_rate, self._mi_batch_size, self._hard_pool.data, self._hard_pool.data_y)
 
         hard_examples_func = self._autoencoder.get_hard_examples(arc, x, y, batch_size, apply_x)
 
         train_func_pool = self._softmax.train_func(arc, learning_rate, self._pool.data, self._pool.data_y, batch_size, apply_x)
-        train_func_hard_pool = self._softmax.train_func(arc, learning_rate, self._hard_pool.data, self._hard_pool.data_y, batch_size, apply_x)
-        train_func_diff_pool = self._softmax.train_func(arc, learning_rate, self._diff_pool.data, self._diff_pool.data_y, batch_size, apply_x)
+        #train_func_hard_pool = self._softmax.train_func(arc, learning_rate, self._hard_pool.data, self._hard_pool.data_y, batch_size, apply_x)
+        if self.pool_different:
+            train_func_diff_pool = self._softmax.train_func(arc, learning_rate, self._diff_pool.data, self._diff_pool.data_y, batch_size, apply_x)
 
         if self.test_mode:
             idx = T.iscalar('test_idx')
@@ -1162,17 +1308,24 @@ class DeepReinforcementLearningModel(Transformer):
             test_output = theano.function([idx],chained_output(self.layers, self._x),givens={self._x:x[idx*batch_size:(idx+1)*batch_size]})
 
         def train_pool(pool, pool_func, amount):
-            self.deeprl_logger.info('\nTRAINING WITH POOL (SHUFFLED) OF SIZE %s \n',int(pool.size))
+            self.deeprl_logger.info('TRAINING WITH POOL (SHUFFLED) OF SIZE %s \n',int(pool.size))
             pool_indexes = pool.as_size(int(pool.size * amount), batch_size)
             np.random.shuffle(pool_indexes)
+            pool_x,pool_y = pool.get_np_data()
+
+            if self.test_mode and np.isnan(pool_x).any() or np.isnan(pool_y).any():
+                self.deeprl_logger.error("Nan detected in the pool")
+
             for i in pool_indexes:
+                if self.test_mode:
+                    batch_x,batch_y = pool_x[i*batch_size:(i+1)*batch_size,:],pool_y[i*batch_size:(i+1)*batch_size]
+                    self.deeprl_logger.debug('Pool index: %s',i)
+                    self.deeprl_logger.debug('\tX: %.2f (min) %.2f (max) ',np.min(batch_x),np.max(batch_y))
+                    self.deeprl_logger.debug('\tY: %.1f (min) %.1f (max) \n',np.min(batch_y),np.max(batch_y))
+                    if np.max(batch_y)>1:
+                        self.deeprl_logger.error('Detected >1 in Y in the pool')
+
                 pool_func(i)
-
-        def moving_average(log, n):
-
-            weights = np.exp(np.linspace(-1, 0, n))
-            weights /= sum(weights)
-            return np.convolve(log, weights)[n-1:-n+1]
 
         def moving_average_v2(log,n):
             weights = np.exp(np.linspace(-1, 0, n))
@@ -1182,9 +1335,10 @@ class DeepReinforcementLearningModel(Transformer):
             return conv[int(len(conv)/2)]
 
         # get early stopping
-        def train_adaptively(batch_id):
-            from math import sqrt
+        def train_adaptively(batch_id,add_to_pool=True,bumped_previous=False):
 
+            self.deeprl_logger.info('DeepRL Episode: %s',self.episode)
+            self.deeprl_logger.info('DeepRL Action Iteration: %s', self.action_iteration)
 
             # For Test purpose only
             if self.test_mode:
@@ -1194,12 +1348,12 @@ class DeepReinforcementLearningModel(Transformer):
                 self.deeprl_logger.debug('Testing P(Y|X) in batch %s',batch_id)
                 self.deeprl_logger.debug(test_pYgivenX(batch_id).flatten().tolist())
 
-                self.deeprl_logger.debug('Testing chained_output for batch %s',batch_id)
+                self.deeprl_logger.debug('Testing chained_output for batch %s\n',batch_id)
                 self.deeprl_logger.debug(test_output(batch_id).flatten().tolist())
 
             self._error_log.append(np.asscalar(error_func(batch_id)))
             self.deeprl_logger.debug('Softmax Error for batch %s: %.4f',batch_id,self._error_log[-1])
-            self._valid_error_log.append(np.asscalar(valid_error_func(batch_id)))
+            self._valid_error_log.append(np.asscalar(error_func(batch_id)))
             err_for_layers = [self._valid_error_log[-1]]
 
             rec_err = reconstruction_func(batch_id)
@@ -1207,14 +1361,19 @@ class DeepReinforcementLearningModel(Transformer):
             self.deeprl_logger.debug('Reconstruction Error for batch %s: %.4f', batch_id, rec_err)
 
             self._neuron_balance_log.append(self.neuron_balance)
+	    
+            if add_to_pool:
+                self._pool.add_from_shared(batch_id, batch_size, x, y)
+            if bumped_previous:
+                bump_pool_size_before = self._bump_pool.size
+                self.deeprl_logger.info('A correct action after a bump. Adding to bump pool')
+                self._bump_pool.add_from_shared(batch_id,batch_size,x,y)
+                self.deeprl_logger.info('Bump pool size: %s (before) %s (after) \n', bump_pool_size_before, self._bump_pool.size)
 
-            self._pool.add_from_shared(batch_id, batch_size, x, y)
             #self._hard_pool.add(*hard_examples_func(batch_id))
 
             #print('size before pool_if_diff: ',self._diff_pool.size)
-            if not self.pool_with_not_bump:
-                self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
-            elif self.pool_with_not_bump and self.episode == 0:
+            if self.pool_different:
                 self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
 
             #print('size after pool_if_diff: ',self._diff_pool.size)
@@ -1223,21 +1382,6 @@ class DeepReinforcementLearningModel(Transformer):
             #print('[train_adaptively] self.diff_pool: ',self._diff_pool.size, ',', self._diff_pool.position, ',', self._diff_pool.max_size)
             #print('[train_adaptively] self.pool (after): ',self._pool.data.get_value().shape[0], ',', self._pool.data_y.eval().shape[0])
 
-            data = {
-                'mea_15': moving_average_v2(self._error_log, 15),
-                'mea_10': moving_average_v2(self._error_log, 10),
-                'mea_5': moving_average_v2(self._error_log, 5),
-                'pool_relevant': self.pool_relevant(self._pool,self.train_distribution,batch_size),
-                'initial_size': [l.initial_size[1] for l in self.layers[:-1]],
-                'input_size':self.layers[0].initial_size[0],
-                'hard_pool_full': self._hard_pool.size == self._hard_pool.max_size,
-                'error_log': self._error_log,
-                'valid_error_log': self._valid_error_log,
-                'curr_error': err_for_layers[-1],
-                'neuron_balance': self._neuron_balance_log[-1],
-                'reconstruction': self._reconstruction_log[-1],
-                'r_15': moving_average_v2(self._reconstruction_log, 15)
-            }
 
             def merge_increment(func, pool, amount, merge, inc,layer_idx):
 
@@ -1252,49 +1396,67 @@ class DeepReinforcementLearningModel(Transformer):
                 return add_idx,rem_idx
 
             #this is where reinforcement learning comes to play
-            if self.episode%self.action_frequency==0:
+            if self.episode>0 and self.episode%self.action_frequency==0:
+                self.deeprl_logger.debug('Creating data and funcs needed for RL \n')
+
+                data = {
+                    'mea_15': moving_average_v2(self._error_log, 15),
+                    #'mea_10': moving_average_v2(self._error_log, 10),
+                    #'mea_5': moving_average_v2(self._error_log, 5),
+                    #'pool_relevant': self.pool_relevant(self._pool, self.train_distribution, batch_size),
+                    'initial_size': [l.initial_size[1] for l in self.layers[:-1]],
+                    'input_size': self.layers[0].initial_size[0],
+                    #'hard_pool_full': self._hard_pool.size == self._hard_pool.max_size,
+                    'error_log': self._error_log,
+                    'valid_error_log': self._valid_error_log,
+                    'curr_error': err_for_layers[-1],
+                    'neuron_balance': self._neuron_balance_log[-1],
+                    'reconstruction': self._reconstruction_log[-1],
+                    'r_15': moving_average_v2(self._reconstruction_log, 15)
+                }
 
                 funcs = {
-                    'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._pool),
-                    'merge_increment_hard_pool': functools.partial(merge_increment, merge_inc_func_hard_pool, self._hard_pool),
+                    'merge_increment_pool' : functools.partial(merge_increment, merge_inc_func_pool, self._bump_pool),
+                    #'merge_increment_hard_pool': functools.partial(merge_increment, merge_inc_func_hard_pool, self._hard_pool),
                     'pool': functools.partial(train_pool, self._pool, train_func_pool),
-                    'pool_finetune':functools.partial(train_pool, self._diff_pool, train_func_diff_pool),
-                    'hard_pool': functools.partial(train_pool, self._hard_pool, train_func_hard_pool),
-                    'hard_pool_clear': self._hard_pool.clear,
+                    'pool_finetune': functools.partial(train_pool, self._diff_pool, train_func_diff_pool) if self.pool_different else functools.partial(train_pool, self._pool, train_func_pool),
+                    #'hard_pool': functools.partial(train_pool, self._hard_pool, train_func_hard_pool),
+                    #'hard_pool_clear': self._hard_pool.clear,
                 }
 
                 for ctrl_i in range(len(self._controller)):
 
                     self._controller[ctrl_i].move(self.action_iteration, data, funcs, ctrl_i)
-                    err_for_layers.append(np.asscalar(valid_error_func(batch_id)))
+                    err_for_layers.append(np.asscalar(error_func(batch_id)))
 
                     #update 'curr_error'
                     data['curr_error'] = err_for_layers[-1]
 
                     action,change = self._controller[ctrl_i].get_current_action_change()
-                    print '%s,%s'%(action,change)
+                    self.deeprl_logger.debug('Current Action: %s, Amount to Change: %s',action,change)
                     if action=="Action.increment":
                         self.layers[ctrl_i].current_out_size += change
-                        print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                        self.deeprl_logger.debug("new size current out size %s\n",self.layers[ctrl_i].current_out_size)
+
                     elif action == 'Action.reduce':
                         self.layers[ctrl_i].current_out_size -= change
-                        print "new size current out size %s" %self.layers[ctrl_i].current_out_size
+                        self.deeprl_logger.debug("new size current out size %s\n", self.layers[ctrl_i].current_out_size)
+
                     elif action=='None' or action == 'Action.pool':
                         self.layers[ctrl_i].current_out_size += 0
+                        self.deeprl_logger.debug("\n")
                     else:
                         raise NotImplementedError
 
                 self.action_iteration += 1
 
-
-            self.deeprl_logger.info("\nTRAINING FOR EPISODE: %s\n",self.episode)
-            self.deeprl_logger.debug("Errors for layers: %s", err_for_layers)
-            self.deeprl_logger.debug("Neuron balance: %s", self.neuron_balance)
+            self.deeprl_logger.info("TRAINING FOR EPISODE: %s\n",self.episode)
+            self.deeprl_logger.debug("\tErrors for layers: %s", err_for_layers)
+            self.deeprl_logger.debug("\tNeuron balance: %s", self.neuron_balance)
             str_size = str(self.layers[0].W.get_value().shape[0])
             for l in self.layers:
                 str_size += " => " + str(l.W.get_value().shape[1])
-            self.deeprl_logger.info(str_size+'\n')
-
+            self.deeprl_logger.info('\t'+str_size+'\n')
 
             train_func(batch_id)
 
@@ -1302,10 +1464,29 @@ class DeepReinforcementLearningModel(Transformer):
             self.episode += 1
 
 
-        def update_pool(batch_id):
-            self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
+        #def update_pool(batch_id):
+        #    self.pool_if_different(self._diff_pool,batch_id, batch_size, x, y)
 
-        return train_adaptively,update_pool
+        return train_adaptively
+
+    def get_logs(self):
+        self.deeprl_logger.info('Log data')
+        self.deeprl_logger.info('\tRec error: %s',self._reconstruction_log[-6:-1])
+        self.deeprl_logger.info('\tError error: %s', self._error_log[-6:-1])
+        self.deeprl_logger.info('\tValid error error: %s', self._valid_error_log[-6:-1])
+        self.deeprl_logger.info('\tNeuron balance error: %s', self._neuron_balance_log[-6:-1])
+        return self._reconstruction_log,self._error_log, self._valid_error_log,self._neuron_balance_log
+
+    def set_logs(self,logs):
+        self._reconstruction_log.extend(logs[0])
+        self._error_log.extend(logs[1])
+        self._valid_error_log.extend(logs[2])
+        self._neuron_balance_log.extend(logs[3])
+        self.deeprl_logger.info('Restored log info')
+        self.deeprl_logger.info('\tReconstruction length: %s',len(self._reconstruction_log))
+        self.deeprl_logger.info('\tError length: %s', len(self._error_log))
+        self.deeprl_logger.info('\tValid error length: %s', len(self._valid_error_log))
+        self.deeprl_logger.info('\tneuron balance length: %s', len(self._neuron_balance_log))
 
     def visualize_nodes(self,learning_rate,iterations,layer_idx,activation,use_scan=False):
         in_size = self.layers[0].W.get_value().shape[0]
@@ -1349,10 +1530,6 @@ class DeepReinforcementLearningModel(Transformer):
         else:
             raise NotImplementedError
         return max_inputs
-
-
-    def get_pool_data(self):
-        return self._pool.get_np_data(),self._diff_pool.get_np_data()
 
     def update_train_distribution(self, t_distribution):
         self.train_distribution.append(t_distribution)
@@ -1432,7 +1609,6 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
 
         self._controller = controller
 
-        self.episode = 0
         self.mean_batch_pool = []
         self.pool_with_not_bump = True
         self.single_node_softmax = True
@@ -1473,17 +1649,33 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
 
         self.deepms_logger.debug('Different Softmax layers are used for each DeepRLs\n')
 
+    def set_time_for_deeprls(self, deep_time):
+        for i in range(len(deep_time)):
+            self.deepRL_set[i].set_episode_count(deep_time[i][0])
+            self.deepRL_set[i].set_action_iteration(deep_time[i][1])
 
-    def set_episode_count(self,val):
-        self.episode = val
+    def get_time_for_deeprls(self):
+        time = [(deeprl.episode,deeprl.action_iteration) for deeprl in self.deepRL_set]
+        self.deepms_logger.info('Time for deeprls: %s',time)
+        return time
 
     def set_research_params(self,**params):
         raise NotImplementedError
 
-    def restore_pool(self,batch_size,X,Y,DX,DY):
+    def restore_pool(self,batch_size,X,Y,size_list,pos_list,DX,DY,dsize_list,dpos_list):
         i = 0
-        for x,y,dx,dy in zip(X,Y,DX,DY):
-            self.deepRL_set[i].restore_pool(batch_size,x,y,dx,dy)
+        for x,y,s,p, dx,dy,ds,dp in zip(X,Y,size_list,pos_list,DX,DY,dsize_list,dpos_list):
+            self.deepRL_set[i].restore_pool(batch_size,x,y,s,p,dx,dy,ds,dp)
+
+    def get_logs(self):
+        logs = []
+        for drl in self.deepRL_set:
+            logs.append(drl.get_logs())
+        return logs
+
+    def set_logs(self,logs):
+        for i,drl in enumerate(self.deepRL_set):
+            drl.set_logs(logs[i])
 
     def get_updated_hid_sizes(self):
         return self.deepRL_set[0].get_updated_hid_sizes()
