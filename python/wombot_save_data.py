@@ -330,6 +330,7 @@ isMoving = False
 got_action = False
 initial_data = True
 move_complete = False
+obstacle = False
 
 prevPose = None
 data_status_pub = None

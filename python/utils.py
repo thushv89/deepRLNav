@@ -22,10 +22,10 @@ THUMBNAIL_W, THUMBNAIL_H = 128, 96
 IMG_SAVE_SKIP = 5 # how many images skipped when saving sequence
 
 #BUMP DETECTION
-BUMP_1_THRESH = 0.06 #sim 0.6 real 0.03
-BUMP_02_THRESH = 0.07 #sim 0.7 real 0.05
-NO_RETURN_THRESH = 0.002
-REVERSE_PUBLISH_DELAY = 0.3
+BUMP_1_THRESH = 0.1 #sim 0.6 real 0.1
+BUMP_02_THRESH = 0.15 #sim 0.7 real 0.15
+NO_RETURN_THRESH = 0.01
+REVERSE_PUBLISH_DELAY = 0.12 # real 0.12  
 ZERO_VEL_PUBLISH_DELAY = 0.05 # publish 0 valued cmd_vel data
 
 #LASER
@@ -37,4 +37,4 @@ PREF_FREQUENCY = 7
 
 #COMMANDS
 GOAL_CANCEL_CMD = "rosservice call /autonomy/path_follower/cancel_request"
-MOVE_ROBOT_CMD = "./atrv_move_robot "
+MOVE_ROBOT_CMD = "./wombot_move_robot "

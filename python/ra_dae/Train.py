@@ -870,7 +870,7 @@ def test(shared_data_file_x,arc,model, model_type):
             action = random.choice([0,1,2])
         logger.info('Action got (Random - Uncertain): %s \n', action)
 
-    action_prob_logger('%s,%s,%s',episode,action,probs)
+    action_prob_logger.info('%s,%s,%s',episode,action,probs)
     return action,probs[action]
 
 fwd_threshold = 0.5
@@ -1349,7 +1349,7 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'SDAEMultiSoftmax'
+        hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
         hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
@@ -1358,7 +1358,7 @@ if __name__ == '__main__':
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [256,192,128]
+        hyperparam.hid_sizes = [64,48,32] #256,192,128 SDAE 64,48,32 DEEPRL
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
