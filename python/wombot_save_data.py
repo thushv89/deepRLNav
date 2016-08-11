@@ -19,19 +19,47 @@ from rospy.numpy_msg import numpy_msg
 import sys
 import scipy.misc as sm
 import utils
+import logging
+
+def save_img(data):
+    global image_dir,episode,img_seq_idx
+    rows = utils.IMG_H
+    cols = utils.IMG_W
+    img_mat = np.empty((rows,cols, 3), dtype=np.int32)
+
+    j=0
+    for i in range(0, len(data), 3):
+        img_mat[j / cols, j % cols, 0] = int(ord(data[i]) * 256)
+        img_mat[j / cols, j % cols, 1] = int(ord(data[i + 1]) * 256)
+        img_mat[j / cols, j % cols, 2] = int(ord(data[i + 2]) * 256)
+        j += 1
+        # num_data.append(int(0.2989 * ord(data[i]) + 0.5870 * ord(data[i + 1]) + 0.1140 * ord(data[i + 2])))
+
+    #image = img.fromarray(img_mat)
+    sm.imsave(image_dir + os.sep + 'img' +str(episode) + '_' + str(img_seq_idx) + ".png",img_mat)
 
 def callback_cam(msg):
-    global reversing
-    global cam_skip,cam_count
+    global reversing,isMoving,got_action
+    global cam_skip,cam_count,img_seq_idx,curr_cam_data
+    global logger,curr_ori,curr_pose
+    global save_img_seq
 
     cam_count += 1
     if cam_count%cam_skip != 0:
         return
 
+    if save_img_seq and (isMoving or reversing):
+
+        if img_seq_idx%utils.IMG_SAVE_SKIP==0:
+            save_img(msg.data)
+            logger.info("%s,%s,%s", episode,img_seq_idx, curr_pose + curr_ori)
+
+        img_seq_idx += 1
+        curr_cam_data = msg.data	
 
     
     if isMoving and not reversing:
-        global currInputs
+        global currInputs,image_updown
 
         data = msg.data
         
@@ -60,8 +88,9 @@ def callback_cam(msg):
             img_preprocessed = np.delete(img_preprocessed,np.s_[:vertical_cut_threshold],0)
             img_preprocessed = np.delete(img_preprocessed,np.s_[-vertical_cut_threshold:],0)
 
-	    img_preprocessed = np.fliplr(img_preprocessed)
-	    img_preprocessed = np.flipud(img_preprocessed)
+            if image_updown:
+    	       img_preprocessed = np.fliplr(img_preprocessed)
+    	       img_preprocessed = np.flipud(img_preprocessed)
             # use if you wann check images data coming have correct data (image cropped resized)
             '''sm.imsave('avg_img'+str(1)+'.jpg', np.reshape(img_data_reshape,
                                                           (int(thumbnail_h-2*vertical_cut_threshold),-1))
@@ -74,9 +103,11 @@ def callback_cam(msg):
 def callback_laser(msg):
     global obstacle_msg_sent
     global currLabels,currInputs
-    global reversing,isMoving
+    global reversing,isMoving,got_action
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
+    global save_img_seq, curr_cam_data,img_seq_idx
+    global logger, curr_pose,curr_ori
 
     laser_count += 1
     if laser_count % laser_skip != 0:
@@ -132,6 +163,12 @@ def callback_laser(msg):
                 save_data()
                 time.sleep(0.1)
                 obstacle_status_pub.publish(True)
+
+                if save_img_seq:
+                    save_img(curr_cam_data)
+                    logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
+                    img_seq_idx += 1
+
                 time.sleep(0.1)
                 isMoving = False
                 reverse_robot()
@@ -176,12 +213,15 @@ def reverse_robot():
 def callback_odom(msg):
     global prevPose
     global isMoving,initial_data
-
+    global curr_pose,curr_ori
     #if initial_data:
     
     data = msg
     pose = data.pose.pose # has position and orientation
-    
+     
+    curr_pose = [float(pose.position.x),float(pose.position.y),float(pose.position.z)]
+    curr_ori = [float(pose.orientation.x),float(pose.orientation.y),float(pose.orientation.z),float(pose.orientation.w)]
+
     if not reversing:
     	x = float(pose.position.x)
     	prevX = float(prevPose.position.x)  if not prevPose==None else 0.0
@@ -201,12 +241,14 @@ def callback_odom(msg):
 
 	#print "Pose:%s"%np.max([abs(x - prevX),abs(y - prevY),abs(z - prevZ)])
 	#print "Orientation:%s\n"%np.max([abs(xo - prevXO),abs(yo - prevYO),abs(zo - prevZO),abs(wo - prevWO)])
-    	tolerance = 0.001
-    	if(abs(x - prevX)<tolerance and abs(y - prevY)<tolerance and abs(z - prevZ)<tolerance  and abs(xo - prevXO)<tolerance and abs(yo - prevYO)<tolerance and abs(zo - prevZO)<tolerance and abs(wo - prevWO)<tolerance):
-	    isMoving = False
-    	else:
-	    
-	    isMoving = True
+    	pose_tol = 0.001
+        ori_tol = 0.001
+        if(abs(x - prevX)<pose_tol and abs(y - prevY)<pose_tol and abs(z - prevZ)<pose_tol
+               and abs(xo - prevXO)<ori_tol and abs(yo - prevYO)<ori_tol and abs(zo - prevZO)<ori_tol and abs(wo - prevWO)<ori_tol):
+            isMoving = False
+        else:
+            isMoving = True
+
     else:
     	isMoving = False
     prevPose = data.pose.pose
@@ -214,27 +256,45 @@ def callback_odom(msg):
 def callback_path_finish(msg):
     from os import system
     import time
-    global move_complete,isMoving
+    global move_complete,isMoving,obstacle
     global cam_count,laser_count
+    global save_img_seq,img_seq_idx,curr_cam_data
+    global curr_pose,curr_ori
+    global episode
+
     if int(msg.data)==1:
         print "saving data...\n"
-        save_data()
         move_complete = True
+
+        if not obstacle:
+            save_data()
+        else:
+            print 'Reached endof path, but hit obstacle'
+            
         time.sleep(0.1)
         if isMoving:
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
             print 'Robot was still moving. Manually killing the path'
 
-    cam_count,laser_count = 0,0
+        if save_img_seq:
+                save_img(curr_cam_data)
+                logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
+                img_seq_idx += 1    
+        
 
 def callback_action_status(msg):
     global isMoving, move_complete
     global vel_lin_buffer,vel_ang_buffer
+    global episode
     move_complete = False
     #isMoving = True
     #empty both velocity buffers
     vel_lin_buffer,vel_ang_buffer=[],[]
+
+    img_seq_idx = 0
+    cam_count,laser_count = 0,0
+    episode += 1
 
 def callback_cmd_vel(msg):
     global vel_lin_buffer,vel_ang_buffer,isMoving
@@ -285,7 +345,62 @@ cam_count,laser_count = 0,0
 vel_lin_buffer = []
 vel_ang_buffer = []
 
-if __name__=='__main__':      
+logger = None
+
+curr_pose = None
+curr_ori = None
+
+save_img_seq = False
+image_dir = None
+img_seq_idx = 0
+curr_cam_data = None
+episode = 0
+image_updown = False
+
+if __name__=='__main__':
+
+    global save_img_seq,image_dir,logger
+    global episode
+
+    import getopt
+    import os.path
+
+    try:
+        opts, args = getopt.getopt(
+            sys.argv[1:], "", ['image_sequence=', "image_dir=", "image_updown="])
+    except getopt.GetoptError as err:
+        print '<filename>.py --image_sequence=<0or1> --image_dir=<dirname> --image_updown=<0or1>'
+	print err        
+	sys.exit(2)
+
+    if len(opts) != 0:
+        for opt, arg in opts:
+            if opt == '--image_sequence':
+                #logger.info('--image_sequence: %s', arg)
+                save_img_seq = bool(int(arg))
+            if opt == '--image_dir':
+                #logger.info('--image_dir: %s', arg)
+                image_dir = arg
+            if opt == '--image_updown':
+                image_updown = bool(int(arg))
+
+    if image_dir and not os.path.exists(image_dir):
+        os.mkdir(image_dir)
+
+    if image_dir and os.path.isfile(image_dir + os.sep + 'trajectory.log'):
+        with open(image_dir + os.sep + 'trajectory.log') as f:
+            f = f.readlines()
+        img_seq_idx = int(f[-1].split(',')[1]) + 1
+        episode = int(f[-1].split(',')[0]) + 1
+
+    if save_img_seq and image_dir is not None:
+        logger = logging.getLogger('TrajectoryLogger')
+        logger.setLevel(logging.INFO)
+        fh = logging.FileHandler(image_dir+os.sep+'trajectory.log')
+        fh.setFormatter(logging.Formatter('%(message)s'))
+        fh.setLevel(logging.INFO)
+        logger.addHandler(fh)
+
     currInputs = []
     currLabels = []
 

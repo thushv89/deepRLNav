@@ -790,7 +790,7 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
 def test(shared_data_file_x,arc,model, model_type):
 
     global episode,i_bumped,hyperparam
-    global logger,test_time_logger
+    global logger,test_time_logger,action_prob_logger
 
     if model_type == 'DeepRLMultiSoftmax':
         model.process(T.matrix('x'), T.matrix('y'),training=False)
@@ -870,6 +870,7 @@ def test(shared_data_file_x,arc,model, model_type):
             action = random.choice([0,1,2])
         logger.info('Action got (Random - Uncertain): %s \n', action)
 
+    action_prob_logger('%s,%s,%s',episode,action,probs)
     return action,probs[action]
 
 fwd_threshold = 0.5
@@ -1179,6 +1180,7 @@ data_inputs = None
 data_labels = None
 action_pub = None
 
+
 hyperparam = None
 episode=0
 algo_move_count = 0
@@ -1211,6 +1213,7 @@ bump_logger = None
 netsize_logger = None
 time_logger,test_time_logger = None,None
 param_logger = None
+action_prob_logger = None
 
 prev_log_bump_ep = 0
 
@@ -1274,7 +1277,8 @@ class HyperParams(object):
 if __name__ == '__main__':
 
     global restore_last, do_train, persist_every, bump_count_window, visualize_every
-    global logger, logging_level, logging_format, bump_logger
+    global logger, logging_level, logging_format, bump_logger, action_prob_logger
+    global action_pub
 
     import getopt
     import os
@@ -1455,6 +1459,13 @@ if __name__ == '__main__':
     fh.setFormatter(logging.Formatter())
     test_time_logger.addHandler(fh)
 
+    action_prob_logger = logging.getLogger('ActionProbLogger')
+    action_prob_logger.setLevel(logging.INFO)
+    action_filename = dir_suffix + os.sep + 'probability_log.log' 
+    action_fh = logging.FileHandler(action_filename)
+    action_fh.setLevel(logging.INFO)
+    action_fh.setFormatter(logging.Formatter('%(message)s'))
+    action_prob_logger.addHandler(action_fh)
     #batch_count = 5
     #input_avger = InputAverager(batch_count,batch_size,in_size)
     #console = logging.StreamHandler(sys.stdout)
@@ -1472,7 +1483,7 @@ if __name__ == '__main__':
     rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)
     rospy.Subscriber("/initial_run",Bool,callback_initial_run)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
-
+    
     rospy.spin()
 
 
