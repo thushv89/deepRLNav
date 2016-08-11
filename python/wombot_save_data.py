@@ -41,8 +41,9 @@ def save_img(data):
 def callback_cam(msg):
     global reversing,isMoving,got_action
     global cam_skip,cam_count,img_seq_idx,curr_cam_data
-    global logger,curr_ori,curr_pose
+    global pose_logger,curr_ori,curr_pose
     global save_img_seq
+    global logger
 
     cam_count += 1
     if cam_count%cam_skip != 0:
@@ -52,7 +53,7 @@ def callback_cam(msg):
 
         if img_seq_idx%utils.IMG_SAVE_SKIP==0:
             save_img(msg.data)
-            logger.info("%s,%s,%s", episode,img_seq_idx, curr_pose + curr_ori)
+            pose_logger.info("%s,%s,%s", episode,img_seq_idx, curr_pose + curr_ori)
 
         img_seq_idx += 1
         curr_cam_data = msg.data	
@@ -96,9 +97,8 @@ def callback_cam(msg):
                                                           (int(thumbnail_h-2*vertical_cut_threshold),-1))
                       )'''
             img_preprocessed.flatten()
-                     
+
         currInputs.append(list(img_preprocessed))
-        print 'Input count: %s\n'%len(currInputs)
 
 def callback_laser(msg):
     global obstacle_msg_sent
@@ -107,7 +107,7 @@ def callback_laser(msg):
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
     global save_img_seq, curr_cam_data,img_seq_idx
-    global logger, curr_pose,curr_ori
+    global pose_logger, logger, curr_pose,curr_ori
 
     laser_count += 1
     if laser_count % laser_skip != 0:
@@ -132,12 +132,12 @@ def callback_laser(msg):
         filtered_ranges = np.asarray(rangesNum)
         filtered_ranges[filtered_ranges<utils.NO_RETURN_THRESH] = 1000
 
-        print "min range:%s"%np.min(filtered_ranges)
+        logger.debug("Min range recorded:%.4f at laser count: %s",np.min(filtered_ranges),len(currLabels))
 
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
-            print "Obstacle set to True\n"
+            logger.info("Laser less than threshold. Obstacle set to True ...\n")
             obstacle = True
 
         if not obstacle:
@@ -155,7 +155,8 @@ def callback_laser(msg):
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             if not move_complete:
-                print "Was still moving and bumped\n"
+                logger.debug("Was still moving and bumped ...\n")
+                logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
                 import time
                 import os
                 for l in range(len(currLabels)):
@@ -166,7 +167,7 @@ def callback_laser(msg):
 
                 if save_img_seq:
                     save_img(curr_cam_data)
-                    logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
+                    pose_logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
                     img_seq_idx += 1
 
                 time.sleep(0.1)
@@ -177,16 +178,15 @@ def callback_laser(msg):
                 currInputs=[]
                 currLabels=[]
 
-        print "Labels count: %s\n"%len(currLabels)
-
 def reverse_robot():
-    print "Reversing Robot\n"
+    logger.info("Reversing Robot ...\n")
     import time
     global vel_lin_buffer,vel_ang_buffer,reversing
     global cmd_vel_pub,restored_bump_pub
     reversing = True
     # make sure robot comes to full stop
     time.sleep(0.5)
+    logger.debug("Posting cmd_vel messages backwards with a %.2f delay",utils.REVERSE_PUBLISH_DELAY)
     for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
         lin_vec = Vector3(-l[0],-l[1],-l[2])
         ang_vec = Vector3(-a[0],-a[1],-a[2])
@@ -196,6 +196,7 @@ def reverse_robot():
         twist_msg.angular = ang_vec
         cmd_vel_pub.publish(twist_msg)
 
+    logger.debug("Posting zero cmd_vel messages with %.2f delay",utils.ZERO_VEL_PUBLISH_DELAY)
     for _ in range(10):
         time.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
         twist_msg = Twist()
@@ -205,7 +206,7 @@ def reverse_robot():
         cmd_vel_pub.publish(twist_msg)
     reversing = False
     restored_bump_pub.publish(True)
-
+    logger.info("Reverse finished ...\n")
 
 # we use this call back to detect the first ever move after termination of move_exec_robot script
 # after that we use callback_action_status
@@ -261,32 +262,40 @@ def callback_path_finish(msg):
     global save_img_seq,img_seq_idx,curr_cam_data
     global curr_pose,curr_ori
     global episode
+    global logger
+    global currInputs,currLabels
 
     if int(msg.data)==1:
-        print "saving data...\n"
+        logger.info("Sending data as a ROS message...\n")
         move_complete = True
 
         if not obstacle:
             save_data()
         else:
-            print 'Reached endof path, but hit obstacle'
+            logger.info('Reached end of path, but hit obstacle...\n')
             
         time.sleep(0.1)
         if isMoving:
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
-            print 'Robot was still moving. Manually killing the path'
+            logger.info('Robot was still moving. Manually killing the path')
 
         if save_img_seq:
                 save_img(curr_cam_data)
-                logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
-                img_seq_idx += 1    
-        
+                pose_logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
+
+        logger.info("Data summary for episode %s",episode)
+        logger.info("\tImage count: %s",len(currInputs))
+        logger.info('\tLaser count: %s\n',len(currLabels))
 
 def callback_action_status(msg):
     global isMoving, move_complete
     global vel_lin_buffer,vel_ang_buffer
+    global img_seq_idx,cam_count,laser_count
     global episode
+    global logger
+
+    logger.info('Received Action message...')
     move_complete = False
     #isMoving = True
     #empty both velocity buffers
@@ -295,6 +304,7 @@ def callback_action_status(msg):
     img_seq_idx = 0
     cam_count,laser_count = 0,0
     episode += 1
+    logger.info('Episode: %s',episode)
 
 def callback_cmd_vel(msg):
     global vel_lin_buffer,vel_ang_buffer,isMoving
@@ -346,6 +356,7 @@ cam_count,laser_count = 0,0
 vel_lin_buffer = []
 vel_ang_buffer = []
 
+pose_logger = None
 logger = None
 
 curr_pose = None
@@ -360,11 +371,17 @@ image_updown = False
 
 if __name__=='__main__':
 
-    global save_img_seq,image_dir,logger
+    global save_img_seq,image_dir,logger,pose_logger
     global episode
 
     import getopt
     import os.path
+
+    logger.setLevel(logging.DEBUG)
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter(logging_format))
+    console.setLevel(logging_level)
+    logger.addHandler(console)
 
     try:
         opts, args = getopt.getopt(
@@ -395,12 +412,12 @@ if __name__=='__main__':
         episode = int(f[-1].split(',')[0]) + 1
 
     if save_img_seq and image_dir is not None:
-        logger = logging.getLogger('TrajectoryLogger')
-        logger.setLevel(logging.INFO)
+        pose_logger = logging.getLogger('TrajectoryLogger')
+        pose_logger.setLevel(logging.INFO)
         fh = logging.FileHandler(image_dir+os.sep+'trajectory.log')
         fh.setFormatter(logging.Formatter('%(message)s'))
         fh.setLevel(logging.INFO)
-        logger.addHandler(fh)
+        pose_logger.addHandler(fh)
 
     currInputs = []
     currLabels = []
@@ -424,11 +441,11 @@ if __name__=='__main__':
         laser_range_1 = (int((utils.LASER_POINT_COUNT/2.)-laser_slice),int((utils.LASER_POINT_COUNT/2.)+laser_slice))
         laser_range_2 = (-int(laser_slice-ignore_points_per_side),-int(ignore_points_per_side))
 
-    print "Laser slicing information"
-    print "Laser points: %d" %utils.LASER_POINT_COUNT
-    print "Laser angle: %d" %utils.LASER_ANGLE
-    print "Laser slice size: %d" %laser_slice
-    print "Laser ranges 0(%s),1(%s),2(%s)" %(laser_range_0,laser_range_1,laser_range_2)
+    logger.info("Laser slicing information")
+    logger.info("Laser points: %d",utils.LASER_POINT_COUNT)
+    logger.info("Laser angle: %d",utils.LASER_ANGLE)
+    logger.info("Laser slice size: %d",laser_slice)
+    logger.info("Laser ranges 0(%s),1(%s),2(%s)\n",laser_range_0,laser_range_1,laser_range_2)
 
     rospy.init_node("save_data_node")
     #rate = rospy.Rate(1)
