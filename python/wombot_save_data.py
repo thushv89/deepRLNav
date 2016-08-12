@@ -20,6 +20,7 @@ import sys
 import scipy.misc as sm
 import utils
 import logging
+import threading
 
 def save_img(data):
     global image_dir,episode,img_seq_idx
@@ -108,6 +109,7 @@ def callback_laser(msg):
     global laser_skip,laser_count
     global save_img_seq, curr_cam_data,img_seq_idx
     global pose_logger, logger, curr_pose,curr_ori
+    global reverse_lock
 
     laser_count += 1
     if laser_count % laser_skip != 0:
@@ -154,6 +156,7 @@ def callback_laser(msg):
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
+            reverse_lock.acquire()
             if not move_complete:
                 logger.debug("Was still moving and bumped ...\n")
                 logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
@@ -177,6 +180,7 @@ def callback_laser(msg):
             else:
                 currInputs=[]
                 currLabels=[]
+            reverse_lock.release()
 
 def reverse_robot():
     logger.info("Reversing Robot ...\n")
@@ -332,6 +336,9 @@ def save_data():
     currLabels=[]
     initial_data = False
 
+logging_level = logging.DEBUG
+logging_format = '[%(name)s] [%(funcName)s] %(message)s'
+
 thumbnail_w = utils.THUMBNAIL_W
 thumbnail_h = utils.THUMBNAIL_H
 
@@ -369,9 +376,11 @@ curr_cam_data = None
 episode = 0
 image_updown = False
 
+reverse_lock = threading.Lock()
+
 if __name__=='__main__':
 
-    global save_img_seq,image_dir,logger,pose_logger
+    global save_img_seq,image_dir,logger,pose_logger,logging_level,logging_format
     global episode
 
     import getopt
