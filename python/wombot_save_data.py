@@ -161,6 +161,8 @@ def callback_laser(msg):
                 import os
                 for l in range(len(currLabels)):
                     currLabels[l] = 0
+
+                logger.debug('Sending data as a ROS message ...\n')
                 save_data()
                 time.sleep(0.1)
                 obstacle_status_pub.publish(True)
@@ -170,7 +172,6 @@ def callback_laser(msg):
                     pose_logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
                     img_seq_idx += 1
 
-                time.sleep(0.1)
                 isMoving = False
                 reverse_robot()
 
