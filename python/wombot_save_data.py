@@ -50,7 +50,7 @@ def callback_cam(msg):
     if cam_count%cam_skip != 0:
         return
 
-    if save_img_seq and (isMoving or reversing):
+    if save_img_seq and ((isMoving and got_action) or reversing):
 
         if img_seq_idx%utils.IMG_SAVE_SKIP==0:
             save_img(msg.data)
@@ -60,7 +60,7 @@ def callback_cam(msg):
         curr_cam_data = msg.data	
 
     
-    if isMoving and not reversing:
+    if isMoving and got_action and not reversing:
         global currInputs,image_updown
 
         data = msg.data
@@ -126,9 +126,7 @@ def callback_laser(msg):
     #print(np.mean(rangesNum[0:15]),np.mean(rangesNum[45:75]),np.mean(rangesNum[105:120]))
 
     only_look_ahead = True
-    if isMoving and not reversing:
-        #print(rangesNum)
-        labels = [0,0,0]
+    if isMoving and got_action and not reversing:
         obstacle = False
 
         filtered_ranges = np.asarray(rangesNum)
@@ -140,23 +138,22 @@ def callback_laser(msg):
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
             logger.info("Laser less than threshold. Obstacle set to True ...\n")
-            obstacle = True
 
-        if not obstacle:
-            labels = [0,1,0]
-        
-        # if there is a one in labels
-        if(1 in labels):
-            currLabels.append(1)
-        # if there is no 1 in labels
-        else:
-            currLabels.append(0)
 
         # middle part of laser [45:75]
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
+
+            obstacle = True
+
+            if not obstacle:
+                currLabels.append(1)
+            else:
+                currLabels.append(0)
+
             reverse_lock.acquire()
+            logger.debug('Reverse lock acquired ...')
             if not move_complete:
                 logger.debug("Was still moving and bumped ...\n")
                 logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
@@ -180,6 +177,7 @@ def callback_laser(msg):
             else:
                 currInputs=[]
                 currLabels=[]
+            logger.debug('Releasing the reverse lock ...')
             reverse_lock.release()
 
 def reverse_robot():
@@ -293,7 +291,7 @@ def callback_path_finish(msg):
         logger.info('\tLaser count: %s\n',len(currLabels))
 
 def callback_action_status(msg):
-    global isMoving, move_complete
+    global isMoving, move_complete,got_action
     global vel_lin_buffer,vel_ang_buffer
     global img_seq_idx,cam_count,laser_count
     global episode
@@ -301,8 +299,8 @@ def callback_action_status(msg):
 
     logger.info('Received Action message...')
     move_complete = False
-    #isMoving = True
-    #empty both velocity buffers
+    got_action = True
+        #empty both velocity buffers
     vel_lin_buffer,vel_ang_buffer=[],[]
 
     img_seq_idx = 0
@@ -323,6 +321,7 @@ def save_data():
     
     global currInputs,currLabels,initial_data
     global data_status_pub,sent_input_pub,sent_label_pub
+    global got_action
 
     sent_input_pub.publish(np.asarray(currInputs,dtype=np.float32).reshape((-1,1)))
     sent_label_pub.publish(np.asarray(currLabels,dtype=np.float32).reshape((-1,1)))
@@ -335,6 +334,7 @@ def save_data():
     currInputs=[]
     currLabels=[]
     initial_data = False
+    got_action = False
 
 logging_level = logging.DEBUG
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
@@ -344,7 +344,7 @@ thumbnail_h = utils.THUMBNAIL_H
 
 reversing = False
 isMoving = False
-got_action = False
+got_action = True
 initial_data = True
 move_complete = False
 obstacle = False
@@ -386,6 +386,7 @@ if __name__=='__main__':
     import getopt
     import os.path
 
+    logger = logging.getLogger('Logger')
     logger.setLevel(logging.DEBUG)
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(logging.Formatter(logging_format))
