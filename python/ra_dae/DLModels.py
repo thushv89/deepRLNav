@@ -534,10 +534,10 @@ class StackedAutoencoderWithSoftmax(Transformer):
             ae.process(self._x, self._y,training=training)
 
     def train_func(self, x, y, learning_rate=None, transformed_x=identity):
-	
+
         if learning_rate is None:
             learning_rate = self.learning_rate
-	
+
         if self.pooling:
             train_func_pool = self._softmax.train_func(0, learning_rate, self._pool.data,self._pool.data_y, self.batch_size)
 
@@ -583,6 +583,24 @@ class StackedAutoencoderWithSoftmax(Transformer):
 
     def error_func(self, arc, x, y, batch_size, transformed_x = identity):
         return self._softmax.error_func(arc, x, y, batch_size)
+
+    def get_pool_data(self):
+        px, py = self._pool.get_np_data()
+
+        self.sdae_logger.debug('Returning pool data to main for persisting ...')
+
+        if self._pool.size > 0:
+            self.sdae_logger.debug('\t Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)', np.min(px),
+                                     np.max(px),
+                                     np.min(py), np.max(py))
+
+        return self._pool.get_np_data(), self._pool.size, self._pool.position
+
+    def restore_pool(self, batch_size, x, y, size, pos):
+        if size > 0:
+            self._pool.restore_pool(batch_size, x, y, size, pos)
+        self.sdae_logger.debug('Restoring pools ...')
+        self.sdae_logger.debug('\tpool: %s (size) %s (position)', self._pool.size, self._pool.position)
 
     def check_forward(self, x, y, batch_size):
         idx = T.iscalar('idx')
@@ -662,6 +680,8 @@ class SDAEMultiSoftmax(Transformer):
         self.sdaems_logger.info('BUILDING MULTI SOFTMAX LAYERS ...\n')
         self.sdaems_logger.debug('Creating 1 node softmax layers per each action')
 
+        self.layers = layers
+
         self.sdae_set = []
         for i in range(hparam.out_size):
             self.sdaems_logger.debug('\tSoftmax layer for action %s', i)
@@ -688,6 +708,19 @@ class SDAEMultiSoftmax(Transformer):
             tmp = sdae.get_predictions_func(arc, x, batch_size, transformed_x)
             funcs.append(tmp)
         return funcs
+
+    def get_pool_data(self):
+        pools = []
+        for sdae in self.sdae_set:
+            pools.append(sdae.get_pool_data())
+
+        return pools
+
+    def restore_pool(self,batch_size,X,Y,size_list,pos_list):
+        i = 0
+        for x, y, s, p, in zip(X, Y, size_list, pos_list):
+            self.sdae_set[i].restore_pool(batch_size,x,y,s,p)
+            i += 1
 
     def check_forward(self, arc, x, y, batch_size, transformed_x=identity):
         idx = T.iscalar('idx')
@@ -1361,7 +1394,7 @@ class DeepReinforcementLearningModel(Transformer):
             self.deeprl_logger.debug('Reconstruction Error for batch %s: %.4f', batch_id, rec_err)
 
             self._neuron_balance_log.append(self.neuron_balance)
-	    
+
             if add_to_pool:
                 self._pool.add_from_shared(batch_id, batch_size, x, y)
             if bumped_previous:
@@ -1666,6 +1699,7 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
         i = 0
         for x,y,s,p, dx,dy,ds,dp in zip(X,Y,size_list,pos_list,DX,DY,dsize_list,dpos_list):
             self.deepRL_set[i].restore_pool(batch_size,x,y,s,p,dx,dy,ds,dp)
+            i += 1
 
     def get_logs(self):
         logs = []

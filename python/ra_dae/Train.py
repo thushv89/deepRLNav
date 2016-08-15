@@ -176,7 +176,7 @@ def make_layers(hparams, layer_params = None, init_sizes = None):
             layers.append(out_layers)
 
     else:
-        if hparams.model_type=='DeepRL' or hparams.model_type=='SDAE':
+        if hparams.model_type=='SDAE':
             nn_layer = NNLayer.Layer(hparams.hid_sizes[-1], hparams.out_size, False, None, None, None,None)
             logger.info('Creating (i=-1) W: %s',nn_layer.W.get_value().shape)
             logger.info('Creating (i=-1) b: %s',nn_layer.b.get_value().shape)
@@ -308,8 +308,6 @@ def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
                 logger.debug('\tdata: %s\n', log[3][-6:-1])
             model.set_logs(restore_logs)
 
-    #TODO SDAEMultisoftmax Restore Pool
-
     elif hparams.model_type == 'SDAE':
         logger.info('CREATING SDAE ...\n')
         model = DLModels.StackedAutoencoderWithSoftmax(layers,rng,hparams,hparams.out_size)
@@ -317,6 +315,27 @@ def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
     elif hparams.model_type == 'SDAEMultiSoftmax':
         logger.info('CREATING SDAE MULTI SOFTMAX ...\n')
         model = DLModels.SDAEMultiSoftmax(layers,rng,hparams)
+
+        if restore_pool is not None:
+            X, Y, = [], []
+            size_list, pos_list, = [], []
+
+            for pools in restore_pool:
+                pool, pool_size, pool_pos = pools
+                X.append(theano.shared(np.asarray(pool[0], dtype=theano.config.floatX), 'pool'))
+                Y.append(theano.shared(np.asarray(pool[1], dtype=theano.config.floatX), 'pool_y'))
+                size_list.append(pool_size)
+                pos_list.append(pool_pos)
+
+                logger.debug('Restoring pools (data count, size, pos): %s,%s,%s (recent)',
+                             pool[0].shape[0], pool_size, pool_pos)
+                if pool_size > 0:
+                    logger.debug('\tPool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)', np.min(pool[0]),
+                                 np.max(pool[0]), np.min(pool[1]), np.max(pool[1]))
+
+            model.restore_pool(hparams.batch_size, X, Y, size_list, pos_list)
+
+
 
     elif hparams.model_type == 'LogisticRegression':
         logger.info('CREATING LOGISTIC REGRESSION ...\n')
@@ -687,9 +706,7 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
         assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
         logger.debug('W,b,b_prime added as numpy arrays')
 
-
-
-    if updated_hparam.model_type == 'DeepRLMultiSoftmax':
+    if updated_hparam.model_type == 'DeepRLMultiSoftmax' :
         multi_softmax_layer_params = []
         softmax_layer_sizes = []
         for softmax in layers[-1]:
@@ -760,7 +777,7 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
     pickle.dump((updated_hparam,lyr_params, layer_sizes, policy_infos, (episode,num_bumps,deeprl_time,algo_move_count)),
                 open(dir_suffix + os.sep + "params_"+str(algo_move_count)+ file_suffix + ".pkl", "wb"))
 
-    if updated_hparam.model_type=='DeepRL' or updated_hparam.model_type=='DeepRLMultiSoftmax':
+    if updated_hparam.model_type=='DeepRLMultiSoftmax':
         for pool in pools:
             (p,p_s,p_pos),(bp,bp_s,bp_pos) = pool
             logger.debug('Pools persisting (data_count,size,position): %s,%s,%s (recent) %s,%s,%s (bump)',p[0].shape[0],p_s,p_pos,
@@ -772,6 +789,18 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
                          np.min(bp[1]), np.max(bp[1]))
 
         pickle.dump(pools,open(dir_suffix + os.sep + 'pools_'+str(algo_move_count)+ file_suffix + '.pkl', 'wb'))
+
+    if updated_hparam.model_type == 'SDAEMultiSoftmax':
+
+        for pool in pools:
+            p, p_s, p_pos= pool
+            logger.debug('Pools persisting (data_count,size,position): %s,%s,%s (recent)',
+                         p[0].shape[0],p_s, p_pos)
+            if p_s > 0:
+                logger.debug('\t Pool X: %.2f (min) %.2f (max), Y: %.1f (min) %.1f (max)', np.min(p[0]), np.max(p[0]),
+                             np.min(p[1]), np.max(p[1]))
+
+        pickle.dump(pools, open(dir_suffix + os.sep + 'pools_' + str(algo_move_count) + file_suffix + '.pkl', 'wb'))
 
     if updated_hparam.model_type == 'DeepRLMultiSoftmax':
         logger.debug('Persisting logs ...')
@@ -971,7 +1000,8 @@ def run(data_file,prev_data_file):
             updated_hparams = copy.copy(hyperparam)
             updated_hparams.hid_sizes = model.get_updated_hid_sizes()
             persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.get_logs(), model.get_time_for_deeprls())
-
+        if hyperparam.model_type == 'SDAEMultiSoftmax':
+            persist_parameters(hyperparam,model.layers, None, model.get_pool_data(), None, None)
         if hyperparam.model_type== 'SDAE':
             persist_parameters(hyperparam,model.layers, None, None, None, None)
 
@@ -1301,12 +1331,15 @@ if __name__ == '__main__':
 
     logger.info('\nPRINTING SYSTEM ARGUMENTS ... \n')
     #when I run in command line
-    restore_model, restore_pool_fn = None,None
+
+    restore_model_fn, restore_pool_fn,restore_logs_fn = None,None,None
+    restore_pool,restore_logs = None,None
+
     if len(opts)!=0:
         for opt,arg in opts:
             if opt == '--restore_model':
                 logger.info('--restore_model: %s',arg)
-                restore_model = arg
+                restore_model_fn = arg
             if opt == '--restore_pools':
                 logger.info('--restore_pool: %s',arg)
                 restore_pool_fn = arg
@@ -1333,15 +1366,22 @@ if __name__ == '__main__':
 
     hyperparam = HyperParams()
 
-    if restore_model is not None and restore_pool_fn is not None and restore_logs_fn is not None:
-        restore_data = pickle.load(open(restore_model, "rb"))
-        restore_pool = pickle.load(open(restore_pool_fn, "rb"))
-        restore_logs = pickle.load(open(restore_logs_fn,'rb'))
-        hyperparam = restore_data[0]
-        restore_model = restore_data[1:]
+    if restore_model_fn is not None or restore_pool_fn is not None or restore_logs_fn is not None:
+        if restore_model_fn is not None:
+            logger.info('\nRESTORING MODEL ...')
+            restore_data = pickle.load(open(restore_model_fn, "rb"))
+            hyperparam = restore_data[0]
+            restore_model = restore_data[1:]
+            hyperparam.print_hyperparams()
+        if restore_pool_fn is not None:
+            logger.info('\nRESTORING POOLS ...')
+            restore_pool = pickle.load(open(restore_pool_fn, "rb"))
+        if restore_logs_fn is not None:
+            logger.info('\nRESTORING LOGS (DEEPRLMultiSoftmax Only) ...')
+            restore_logs = pickle.load(open(restore_logs_fn,'rb'))
 
         logger.info('\nRESTORING FROM PERSISTED DATA ...\n')
-        hyperparam.print_hyperparams()
+
 
         model = make_model(hyperparam,restore_data=restore_model,restore_pool=restore_pool,restore_logs=restore_logs)
     else:
@@ -1349,7 +1389,7 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'DeepRLMultiSoftmax'
+        hyperparam.model_type = 'SDAEMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
         hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
@@ -1358,7 +1398,7 @@ if __name__ == '__main__':
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [64,48,32] #256,192,128 SDAE 64,48,32 DEEPRL
+        hyperparam.hid_sizes = [256,192,128] #256,192,128 SDAE 64,48,32 DEEPRL
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
