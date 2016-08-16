@@ -134,12 +134,6 @@ def callback_laser(msg):
 
         logger.debug("Min range recorded:%.4f at laser count: %s",np.min(filtered_ranges),len(currLabels))
 
-        if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
-                        np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
-                        np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
-            logger.info("Laser less than threshold. Obstacle set to True ...\n")
-
-
         # middle part of laser [45:75]
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
                         np.min(filtered_ranges[laser_range_0[0]:laser_range_0[1]])<bump_thresh_0_2 or \
@@ -147,10 +141,8 @@ def callback_laser(msg):
 
             obstacle = True
 
-            if not obstacle:
-                currLabels.append(1)
-            else:
-                currLabels.append(0)
+           
+            currLabels.append(0)
 
             reverse_lock.acquire()
             logger.debug('Reverse lock acquired ...')
@@ -180,7 +172,8 @@ def callback_laser(msg):
                 currLabels=[]
             logger.debug('Releasing the reverse lock ...')
             reverse_lock.release()
-
+	else:
+	    currLabels.append(1)
 def reverse_robot():
     logger.info("Reversing Robot ...\n")
     import time
@@ -393,6 +386,9 @@ if __name__=='__main__':
     console.setFormatter(logging.Formatter(logging_format))
     console.setLevel(logging_level)
     logger.addHandler(console)
+
+    logger.info('Laser topic: %s',utils.LASER_SCAN_TOPIC)
+    logger.info('Camera topic: %s',utils.CAMERA_IMAGE_TOPIC)
 
     try:
         opts, args = getopt.getopt(
