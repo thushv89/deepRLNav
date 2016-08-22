@@ -29,11 +29,11 @@ THUMBNAIL_W, THUMBNAIL_H = 128, 96
 IMG_SAVE_SKIP = 5 # how many images skipped when saving sequence
 
 #BUMP DETECTION
-BUMP_1_THRESH = 0.12 if TYPE=='REAL' else 0.6 #sim 0.6 real 0.2
-BUMP_02_THRESH = 0.2 if TYPE=='REAL' else 0.7 #sim 0.7 real 0.25
-NO_RETURN_THRESH = 0.01
-REVERSE_PUBLISH_DELAY = 0.15 # real 0.15
-ZERO_VEL_PUBLISH_DELAY = 0.05 # publish 0 valued cmd_vel data
+BUMP_1_THRESH = 0.2 if TYPE=='REAL' else 0.6 #sim 0.6 real 0.2
+BUMP_02_THRESH = 0.25 if TYPE=='REAL' else 0.7 #sim 0.7 real 0.25
+NO_RETURN_THRESH = 0.05
+REVERSE_PUBLISH_DELAY = 0.15 # real 0.12
+ZERO_VEL_PUBLISH_DELAY = 0.01 # publish 0 valued cmd_vel data
 
 #LASER
 LASER_FREQUENCY = 40 if TYPE=='REAL' else 10 #sim 10 real 40 

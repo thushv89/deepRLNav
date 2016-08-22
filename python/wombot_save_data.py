@@ -21,6 +21,7 @@ import scipy.misc as sm
 import utils
 import logging
 import threading
+from os import system
 
 def save_img(data):
     global image_dir,episode,img_seq_idx
@@ -145,8 +146,14 @@ def callback_laser(msg):
             currLabels.append(0)
 
             reverse_lock.acquire()
+	    cmd = "rosservice call /autonomy/path_follower/cancel_request"
+	    system(cmd)
+	    logger.debug("Called cancel path request ...\n")
             logger.debug('Reverse lock acquired ...')
             if not move_complete:
+		logger.info("Posting 0 cmd_vel data ...")
+		stop_robot()
+		logger.info("Finished posting 0 cmd_vel data ...")
                 logger.debug("Was still moving and bumped ...\n")
                 logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
                 import time
@@ -156,7 +163,7 @@ def callback_laser(msg):
 
                 logger.debug('Sending data as a ROS message ...\n')
                 save_data()
-                time.sleep(0.1)
+                rospy.sleep(0.1)
                 obstacle_status_pub.publish(True)
 
                 if save_img_seq:
@@ -174,32 +181,53 @@ def callback_laser(msg):
             reverse_lock.release()
 	else:
 	    currLabels.append(1)
+
+def stop_robot():
+    import time
+    global cmd_vel_pub
+    global logger
+    logger.debug("Posting 0 cmd_vel data ....")
+    for _ in range(100):
+	rospy.sleep(0.01)
+	twist_msg = Twist()
+	twist_msg.linear = Vector3(0,0,0)
+	twist_msg.angular = Vector3(0,0,0)
+	cmd_vel_pub.publish(twist_msg)
+    logger.debug("Finished posting 0 cmd_vel data ...\n")
+
 def reverse_robot():
+    global logger
     logger.info("Reversing Robot ...\n")
     import time
     global vel_lin_buffer,vel_ang_buffer,reversing
     global cmd_vel_pub,restored_bump_pub
     reversing = True
-    # make sure robot comes to full stop
-    time.sleep(0.5)
+    
     logger.debug("Posting cmd_vel messages backwards with a %.2f delay",utils.REVERSE_PUBLISH_DELAY)
     for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
         lin_vec = Vector3(-l[0],-l[1],-l[2])
         ang_vec = Vector3(-a[0],-a[1],-a[2])
-        time.sleep(utils.REVERSE_PUBLISH_DELAY)
         twist_msg = Twist()
         twist_msg.linear = lin_vec
         twist_msg.angular = ang_vec
+	rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
         cmd_vel_pub.publish(twist_msg)
+    # publish last twist message so the robot reverse a bit more
+    for _ in range(5):
+	rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
+	cmd_vel_pub.publish(twist_msg)
 
+    logger.debug("Finished posting cmd_vel messages backwards ...\n")
+    rospy.sleep(0.5)
     logger.debug("Posting zero cmd_vel messages with %.2f delay",utils.ZERO_VEL_PUBLISH_DELAY)
-    for _ in range(10):
-        time.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
+    for _ in range(100):
+        rospy.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
         twist_msg = Twist()
         twist_msg.linear = Vector3(0,0,0)
         twist_msg.angular = Vector3(0,0,0)
 
         cmd_vel_pub.publish(twist_msg)
+    logger.debug("Finished posting zero cmd_vel messages ...\n")
     reversing = False
     restored_bump_pub.publish(True)
     logger.info("Reverse finished ...\n")
@@ -303,8 +331,8 @@ def callback_action_status(msg):
     logger.info('Episode: %s',episode)
 
 def callback_cmd_vel(msg):
-    global vel_lin_buffer,vel_ang_buffer,isMoving
-    if isMoving:
+    global vel_lin_buffer,vel_ang_buffer,isMoving,obstacle,reversing
+    if isMoving and not reversing and not obstacle:
         lin_vec = msg.linear #Vector3 object
         ang_vec = msg.angular
         vel_lin_buffer.append([lin_vec.x,lin_vec.y,lin_vec.z])
