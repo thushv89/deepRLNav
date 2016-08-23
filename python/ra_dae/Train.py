@@ -905,23 +905,23 @@ def test(shared_data_file_x,arc,model, model_type):
 fwd_threshold = 0.5
 
 def run(data_file,prev_data_file):
-    global hyperparam,episode,algo_move_count,i_bumped,bumped_prev_ep,bump_episode,last_action,\
+    global hyperparam,episode,algo_move_count,i_bumped,bumped_prev_ep,last_action,\
         fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters,last_visualized,visualize_every
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
     global initial_run
     global hit_obstacle,reversed,move_complete
     global weighted_bumps,last_act_prob
+    global robot_type
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
-    logger.info('Bump_episode: %s',bump_episode)
     logger.info('Number of Moves by the DeepRL: %s',algo_move_count)
     logger.info('Number of bumps: %s \n',num_bumps)
 
     # and after restarting both atrv_save_data and move_exec_robot
     if data_file[1].shape[0]>0 and initial_run:
-        logger.debug('Very first run after Termination\n')
+        logger.debug('Very first run after Termination or Reverse\n')
         last_action = 1
         shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
         action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
@@ -973,12 +973,18 @@ def run(data_file,prev_data_file):
                 logger.info('Did not bump, so predicting with current data\n')
                 action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
             else:
-                logger.info('Bumped, so predicting with previous data\n')
-                action,prob = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
+                if robot_type=='s':
+                    logger.info('Bumped, so predicting with previous data\n')
+                    action,prob = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
+
+                elif robot_type=='w':
+                    logger.info('Reversing straight ...\n')
+                else:
+                    raise NotImplementedError
+
                 logger.info('Weighted bump: %.2f (current)', last_act_prob)
                 weighted_bumps += last_act_prob
-                logger.info('Total weighted bumps: %.2f\n',weighted_bumps)
-
+                logger.info('Total weighted bumps: %.2f\n', weighted_bumps)
             algo_move_count += 1
 
         elif shared_data_file and shared_data_file[2]>0 and not do_train:
@@ -1063,8 +1069,8 @@ def run(data_file,prev_data_file):
         # we publish the action only if we recieved reserved signal
         # we do not publish if the while loop terminated of timeout
         if temp_i<100:
+            logger.debug('Publishing action after reverse... \n')
             action_pub.publish(action)
-
 
 def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     import matplotlib
@@ -1092,7 +1098,6 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     plt.close('all')
 
 prev_data = None
-bump_episode = -1
 
 import scipy.misc
 def save_images_curr_prev(prev,curr):
@@ -1105,7 +1110,7 @@ def save_images_curr_prev(prev,curr):
 
 def callback_data_save_status(msg):
 
-    global data_inputs,data_labels,prev_data,i_bumped,bump_episode,episode,run_mutex
+    global data_inputs,data_labels,prev_data,i_bumped,episode,run_mutex
     global hit_obstacle,reversed,move_complete
     global save_images
     global hyperparam
@@ -1127,18 +1132,17 @@ def callback_data_save_status(msg):
     if data_inputs.shape[0]%hyperparam.batch_size!=0:
         logger.debug('Input count is not a factor of batchsize')
         num_batches = int(data_inputs.shape[0]/hyperparam.batch_size)
-	if num_batches > 0:
+        if num_batches > 0:
             logger.debug('Deleting %s inputs from total %s',data_inputs.shape[0]-num_batches*hyperparam.batch_size,data_inputs.shape[0])
 
             data_inputs = np.delete(data_inputs,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
             data_labels = np.delete(data_labels,np.s_[0:data_labels.shape[0]-num_batches*hyperparam.batch_size],0)
             logger.debug('Total size after deleting %s',data_inputs.shape[0])
 
-    # for the 1st iteration
+    # for the 1st iteration after terminating save_data script
     if i_bumped or initial_data==0:
         logger.info("Initial run after the break!")
         #prev_data = None
-        bump_episode = episode-1
         i_bumped = False
 
     if prev_data is not None:
@@ -1165,6 +1169,39 @@ def callback_data_save_status(msg):
     hit_obstacle = False
     reversed = False
 
+
+def callback_rev_data_save_status(msg):
+    global rev_data_inputs,rev_data_labels,run_mutex
+    global hyperparam
+    global prev_data
+    global initial_run,i_bumped
+
+    logger.info('Reversing Data Received ...')
+    rev_input_count = rev_data_inputs.shape[0]
+    rev_label_count = rev_data_labels.shape[0]
+    logger.info('Only considering the last batch of data ...\n')
+    logger.info('curr_rev_data (before): %s, %s', data_inputs.shape, data_labels.shape)
+    rev_data_inputs = rev_data_inputs[-hyperparam.batch_size:,:]
+    rev_data_labels = rev_data_labels[-hyperparam.batch_size:]
+    logger.info('curr_rev_data (after): %s, %s\n', data_inputs.shape, data_labels.shape)
+
+    if rev_input_count >= hyperparam.batch_size and rev_label_count >= hyperparam.batch_size:
+        logger.debug('Detected enough reverse data ...\n')
+
+        try:
+            logger.debug('Locking the run function...')
+            run_mutex.acquire()
+            initial_run = True
+            i_bumped = False
+            logger.debug('Setting initial_run %s',initial_run)
+            logger.debug('Setting i_bumped to %s\n', i_bumped)
+            run([rev_data_inputs, rev_data_labels], None)
+            if not hit_obstacle:
+                prev_data = [rev_data_inputs, rev_data_labels]
+        finally:
+            run_mutex.release()
+            logger.debug('Releasing the run function...\n')
+
 def callback_data_inputs(msg):
     global data_inputs,hyperparam
     global logger
@@ -1174,32 +1211,42 @@ def callback_data_inputs(msg):
     #scipy.misc.imsave('rec_img'+str(episode)+'.jpg', data_inputs[-1].reshape(64,-1)*255)
     logger.info('Recieved. Input size: %s',data_inputs.shape)
 
+
 def callback_data_labels(msg):
     global data_labels,out_size
     global logger
-
     data_labels = np.asarray(msg.data,dtype=np.int32).reshape((-1,))
     logger.info('Recieved. Label size: %s',data_labels.shape)
 
-def callback_restored_bump(msg):
-    global last_action,action_pub
-    global episode,algo_move_count
-    global reversed
 
+def callback_rev_data_inputs(msg):
+    global rev_data_inputs,hyperparam,logger
+    rev_data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((-1,hyperparam.in_size))/255.
+    logger.info('Recieved. Reversed Input size: %s', rev_data_inputs.shape)
+
+
+def callback_rev_data_labels(msg):
+    global rev_data_labels,hyperparam,logger
+    rev_data_labels = np.asarray(msg.data, dtype=np.int32).reshape((-1,))
+    logger.info('Recieved. Reversed Label size: %s', rev_data_labels.shape)
+
+
+def callback_restored_bump(msg):
+    global last_action,action_pub,reversed
+    global episode,algo_move_count
     reversed = True
-    #episode += 1
-    #algo_move_count += 1
-    #action_pub.publish(last_action)
+
 
 def callback_obstacle_status(msg):
     global  hit_obstacle,move_complete
-
     hit_obstacle = True
     move_complete = True
+
 
 def callback_path_finish(msg):
     global move_complete
     move_complete = True
+
 
 def callback_initial_run(msg):
     global  initial_run
@@ -1208,6 +1255,9 @@ def callback_initial_run(msg):
 bumped_prev_ep = False # this is to fill bump pool in deeprl
 data_inputs = None
 data_labels = None
+rev_data_inputs = None
+rev_data_labels = None
+
 action_pub = None
 
 
@@ -1253,6 +1303,7 @@ move_complete = False
 hyperparam = None
 test_mode = False
 
+robot_type = 'w' #w for wombot, s for sim
 class HyperParams(object):
 
     def __init__(self):
@@ -1309,6 +1360,7 @@ if __name__ == '__main__':
     global restore_last, do_train, persist_every, bump_count_window, visualize_every
     global logger, logging_level, logging_format, bump_logger, action_prob_logger
     global action_pub
+    global robot_type
 
     import getopt
     import os
@@ -1323,7 +1375,7 @@ if __name__ == '__main__':
 
     try:
         opts,args = getopt.getopt(
-            sys.argv[1:],"",['restore_model=',"restore_pools=","restore_logs=","train=","persist_window=","bump_window=","visualize_window="])
+            sys.argv[1:],"t:",['restore_model=',"restore_pools=","restore_logs=","train=","persist_window=","bump_window=","visualize_window="])
     except getopt.GetoptError as err:
         logger.error('<filename>.py --restore_model=<filename> --restore_pools=<filename> --restore_logs=<filename> --train=<0or1> --persist_window=<int> --bump_window=<int>')
         logger.critical(err)
@@ -1337,6 +1389,10 @@ if __name__ == '__main__':
 
     if len(opts)!=0:
         for opt,arg in opts:
+            if opt == '-t':
+                logger.critical('Type: %s',arg)
+                robot_type = arg
+
             if opt == '--restore_model':
                 logger.info('--restore_model: %s',arg)
                 restore_model_fn = arg
@@ -1382,8 +1438,8 @@ if __name__ == '__main__':
 
         logger.info('\nRESTORING FROM PERSISTED DATA ...\n')
 
-
         model = make_model(hyperparam,restore_data=restore_model,restore_pool=restore_pool,restore_logs=restore_logs)
+
     else:
         hyperparam.in_size = 7424
         hyperparam.aspect_ratio = [128,58]
@@ -1513,15 +1569,23 @@ if __name__ == '__main__':
     #console.setLevel(logging_level)
     #logger.addHandler(console)
 
-
     rospy.init_node("deep_rl_node")
+
     action_pub = rospy.Publisher('action_status', Int16, queue_size=10)
+
     rospy.Subscriber("/data_sent_status", Int16, callback_data_save_status)
     rospy.Subscriber("/data_inputs", numpy_msg(Floats), callback_data_inputs)
     rospy.Subscriber("/data_labels", numpy_msg(Floats), callback_data_labels)
+
+    rospy.Subscriber("/rev_data_sent_status", Int16, callback_rev_data_save_status)
+    rospy.Subscriber("/rev_data_inputs", numpy_msg(Floats), callback_rev_data_inputs)
+    rospy.Subscriber("/rev_data_labels", numpy_msg(Floats), callback_rev_data_labels)
+
     rospy.Subscriber("/restored_bump",Bool,callback_restored_bump)
     rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)
+
     rospy.Subscriber("/initial_run",Bool,callback_initial_run)
+
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
     
     rospy.spin()

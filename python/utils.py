@@ -2,7 +2,7 @@
 
 ############# THE MOST IMPORTANT SETTING ################
 
-TYPE = 'REAL' #SIM or REAL
+TYPE = 'SIM' #SIM or REAL
 
 #########################################################
 
@@ -17,6 +17,9 @@ ACTION_STATUS_TOPIC = "/action_status"
 DATA_SENT_STATUS = "/data_sent_status"
 DATA_INPUT_TOPIC = "/data_inputs"
 DATA_LABEL_TOPIC = "/data_labels"
+REV_DATA_SENT_STATUS = "/rev_data_sent_status"
+REV_DATA_INPUT_TOPIC = "/rev_data_inputs"
+REV_DATA_LABEL_TOPIC = "/rev_data_labels"
 OBSTACLE_STATUS_TOPIC = "/obstacle_status"
 RESTORE_AFTER_BUMP_TOPIC = "/restored_bump"
 INITIAL_RUN_TOPIC = "/initial_run"
@@ -44,4 +47,4 @@ PREF_FREQUENCY = 7 if TYPE=='REAL' else 10
 
 #COMMANDS
 GOAL_CANCEL_CMD = "rosservice call /autonomy/path_follower/cancel_request"
-MOVE_ROBOT_CMD = "./wombot_move_robot " if TYPE=='REAL' else "./atrv_move_robot "# sim ./atrv_move_robot real ./wombot_move_robot
+MOVE_ROBOT_CMD = "./wombot_move_robot " if TYPE=='REAL' else "./move_robot_v2 "# sim ./atrv_move_robot real ./wombot_move_robot

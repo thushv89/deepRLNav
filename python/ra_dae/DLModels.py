@@ -12,7 +12,7 @@ import sys
 import logging
 import random
 
-logging_level = logging.DEBUG
+logging_level = logging.INFO
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
