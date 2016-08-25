@@ -883,7 +883,7 @@ def run(data_file):
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
     global initial_run
-    global reversed,move_complete
+    global robot_reversed,move_complete
     global weighted_bumps,last_act_prob
     global robot_type
     global prev_data
@@ -922,13 +922,7 @@ def run(data_file):
                 y_tmp.append(1.)
 
         prev_data[1] = np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)
-        # KEEPING THIS BECAUSE SOMETIMES THERE ARE DIM MISMATCH ERRORS IN THEANO
-        # theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1, 1))
         prev_shared_data_file = make_shared(prev_data[0],prev_data[1],'prev_inputs',False)
-        logger.debug('--------- prev_shared_data_file -----------')
-        logger.debug('\tInput size: %s',prev_shared_data_file[0].get_value().shape)
-        logger.debug('\tLabel size: %s', prev_shared_data_file[1].get_value().shape)
-        logger.debug('\tData count: %s\n', prev_shared_data_file[2])
         shared_data_file = make_shared(data_file[0],None,'inputs',False)
 
         logger.info("Input size: %s", shared_data_file[0].eval().shape)
@@ -1057,7 +1051,7 @@ def run(data_file):
     else:
         logger.debug('Hit an obstacle. Waiting for reverse to complete')
         temp_i = 0
-        while (not reversed) and temp_i<100:
+        while (not robot_reversed) and temp_i<100:
             time.sleep(0.1)
             temp_i += 1
 
@@ -1068,6 +1062,7 @@ def run(data_file):
         if temp_i<100:
             logger.debug('Publishing action after reverse... \n')
             action_pub.publish(action)
+
 
 def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     import matplotlib
@@ -1094,6 +1089,7 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     plt.clf()
     plt.close('all')
 
+
 import scipy.misc
 def save_images_curr_prev(prev,curr):
     global episode
@@ -1107,7 +1103,7 @@ def save_images_curr_prev(prev,curr):
 def callback_data_save_status(msg):
 
     global data_inputs,prev_data,i_bumped,episode,run_mutex
-    global reversed,move_complete
+    global robot_reversed,move_complete
     global save_images
     global hyperparam
 
@@ -1149,7 +1145,7 @@ def callback_data_save_status(msg):
         logger.warning("\nNo data to run\n")
 
     move_complete = False
-    reversed = False
+    robot_reversed = False
 
 
 def callback_rev_data_save_status(msg):
@@ -1171,12 +1167,10 @@ def callback_rev_data_save_status(msg):
         try:
             logger.debug('Locking the run function...')
             run_mutex.acquire()
-            #initial_run = True
-            #logger.debug('Setting initial_run %s',initial_run)
             run([rev_data_inputs])
             i_bumped = False
             logger.debug('Setting i_bumped to %s\n', i_bumped)
-            #TODO: MOVE PREV DATA ASSIGN TO TRAIN FUNC
+
         finally:
             run_mutex.release()
             logger.debug('Releasing the run function...\n')
@@ -1196,9 +1190,9 @@ def callback_rev_data_inputs(msg):
 
 
 def callback_restored_bump(msg):
-    global last_action,action_pub,reversed
-    global episode,algo_move_count
-    reversed = True
+    global last_action,action_pub, robot_reversed
+    global episode, algo_move_count
+    robot_reversed = True
 
 
 def callback_obstacle_status(msg):
@@ -1213,7 +1207,7 @@ def callback_path_finish(msg):
 
 
 def callback_initial_run(msg):
-    global  initial_run
+    global initial_run
     initial_run = True
 
 prev_data =[None,None]
@@ -1248,7 +1242,7 @@ pool_with_not_bump = True
 visualize_filters = True
 save_images = True
 
-reversed = False
+robot_reversed = False
 initial_run = False
 
 logger = logging.getLogger(__name__)
@@ -1355,7 +1349,7 @@ if __name__ == '__main__':
     if len(opts)!=0:
         for opt,arg in opts:
             if opt == '-t':
-                logger.critical('Type: %s',arg)
+                logger.info('Type: %s',arg)
                 robot_type = arg
 
             if opt == '--restore_model':
@@ -1381,7 +1375,6 @@ if __name__ == '__main__':
                 visualize_every = int(arg)
                 if visualize_every==0:
                     visualize_filters = False
-
 
     theano.config.floatX = 'float32'
 

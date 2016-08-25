@@ -367,7 +367,7 @@ def callback_path_finish(msg):
     global logger
     global currInputs
     global trigger_reverse
-    
+
     if int(msg.data)==1:
         logger.info("Sending data as a ROS message...\n")
         move_complete = True
