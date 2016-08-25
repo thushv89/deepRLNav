@@ -39,7 +39,12 @@ def make_shared(batch_x, batch_y, name, normalize, normalize_thresh=1.0):
     max_val = np.max(x_shared.eval())
 
     assert 0.004<=max_val<=1.
-    y_shared = T.cast(theano.shared(batch_y.astype(theano.config.floatX), name + '_y_pkl'),'int32')
+    if batch_y is not None:
+        #y_shared = T.cast(theano.shared(batch_y.astype(theano.config.floatX), name + '_y_pkl'),'int32')
+        y_shared = theano.shared(batch_y, name + '_y_pkl')
+    else:
+        y_shared = None
+
     size = batch_x.shape[0]
 
     return x_shared, y_shared, size
@@ -589,7 +594,6 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
     #import scipy # use ifyou wanna check images are received correctly
         #scipy.misc.imsave('img'+str(episode)+'.jpg', data_file[0].get_value()[-1,:].reshape(6 4,-1)*255)
         #scipy.misc.imsave('avg_img'+str(episode)+'.jpg', avg_inputs[-1,:].reshape(64,-1)*255)
-    check_fwd = model.check_forward(arc, data_file[0], data_file[1], batch_size)
 
     logger.info('\nTRANING DATA ...\n')
     try:
@@ -598,31 +602,13 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
             from collections import Counter
             global last_action,episode,i_bumped,num_bumps
 
-            i_bumped = False
-
-            for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
-                # if we should go forward #no training though
-                # we always train from previous batches
-                if not check_fwd(t_batch):
-                    i_bumped = True
-                    num_bumps += 1
-                    break
-
             if not i_bumped:
 
-                for p_t_batch in range(prev_data_file[0].get_value().shape[0]):
-                    t_dist = Counter(prev_data_file[1][p_t_batch * batch_size: (p_t_batch + 1) * batch_size].eval())
-                    model.update_train_distribution({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()},last_action)
-
-                logger.info('Didnt bump. yay!!!')
+                logger.warning('Didnt bump. yay!!!')
                 logger.debug('I took correct action %s',last_action)
 
-                y_tmp = []
-                for i in range(prev_data_file[0].get_value().shape[0]):
-                    y_tmp.append(1.)
                 train_adaptive_prev = model.train_func(
-                    arc, learning_rate, prev_data_file[0],
-                    theano.shared(np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)), batch_size,last_action)
+                    arc, learning_rate, prev_data_file[0],prev_data_file[1], batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
                 start_time = time.clock()
@@ -630,7 +616,6 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                 logger.debug('Pooling choice: %s',pool_choice)
                 for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
                     if pool_choice == p_t_batch:
-
                         logger.debug('Bumped previous episode? %s',bumped_prev_ep)
                         train_adaptive_prev(p_t_batch,True,bumped_prev_ep)
                         logger.debug('Adding %s batch to pool',p_t_batch)
@@ -644,21 +629,10 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
             # we've bumped
             if i_bumped:
 
-                logger.info('Bumped after taking action %s', last_action)
-
-                for p_t_batch in range(prev_data_file[0].get_value().shape[0]):
-                    t_dist = Counter(prev_data_file[1][p_t_batch * batch_size: (p_t_batch + 1) * batch_size].eval())
-                    model.update_train_distribution({str(k): v*1.0 / sum(t_dist.values()) for k, v in t_dist.items()},last_action)
-
-                y_tmp = []
-                for i in range(prev_data_file[0].get_value().shape[0]):
-                    y_tmp.append(0.)
-
-                y = np.asarray(y_tmp).reshape(-1,1)
+                logger.warning('Bumped after taking action %s', last_action)
 
                 train_adaptive_prev = model.train_func(
-                    arc, learning_rate, prev_data_file[0],
-                    theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size,last_action)
+                    arc, learning_rate, prev_data_file[0], prev_data_file[1], batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
                 start_time = time.clock()
                 pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
@@ -678,7 +652,6 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
 
     except StopIteration:
         pass
-
 
     logger.info('Time taken for the episode: %10.3f (secs)', (end_time-start_time))
     time_logger.info('%s, %.3f',episode,(end_time-start_time))
@@ -904,45 +877,63 @@ def test(shared_data_file_x,arc,model, model_type):
 
 fwd_threshold = 0.5
 
-def run(data_file,prev_data_file):
+def run(data_file):
     global hyperparam,episode,algo_move_count,i_bumped,bumped_prev_ep,last_action,\
         fwd_threshold,num_bumps,do_train,last_persisted,visualize_filters,last_visualized,visualize_every
     global logger,logging_level,logging_format,bump_logger,prev_log_bump_ep
     global netsize_logger
     global initial_run
-    global hit_obstacle,reversed,move_complete
+    global reversed,move_complete
     global weighted_bumps,last_act_prob
     global robot_type
-
+    global prev_data
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
     logger.info('Number of Moves by the DeepRL: %s',algo_move_count)
     logger.info('Number of bumps: %s \n',num_bumps)
 
+    if save_images and (data_file[0] is not None) and (prev_data[0] is not None):
+        logger.debug('Saving last image of previous and current image batches\n')
+        save_images_curr_prev(prev_data[0][-1], data_file[0][-1])
+
     # and after restarting both atrv_save_data and move_exec_robot
-    if data_file[1].shape[0]>0 and initial_run:
+    if data_file[0].shape[0]>0 and initial_run:
         logger.debug('Very first run after Termination or Reverse\n')
         last_action = 1
-        shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
+        shared_data_file = make_shared(data_file[0],None,'inputs',False)
         action,prob = test(shared_data_file[0],1,model,hyperparam.model_type)
 
         algo_move_count += 1
         initial_run = False
 
+
     # any other run
-    elif data_file[1].shape[0]>0:
-        shared_data_file = make_shared(data_file[0],data_file[1],'inputs',False)
+    elif data_file[0].shape[0]>0:
+
+        if i_bumped:
+            logger.info('Synthesizing LASER data with 0 for the previous episode (%s)', episode - 1)
+            y_tmp = []
+            for i in range(prev_data[0].shape[0]):
+                y_tmp.append(0.)
+        else:
+            logger.info('Synthesizing LASER data with 1 for the previous episode (%s)', episode - 1)
+            y_tmp = []
+            for i in range(prev_data[0].shape[0]):
+                y_tmp.append(1.)
+
+        prev_data[1] = np.asarray(y_tmp,dtype=theano.config.floatX).reshape(-1,1)
+        # KEEPING THIS BECAUSE SOMETIMES THERE ARE DIM MISMATCH ERRORS IN THEANO
+        # theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1, 1))
+        prev_shared_data_file = make_shared(prev_data[0],prev_data[1],'prev_inputs',False)
+        logger.debug('--------- prev_shared_data_file -----------')
+        logger.debug('\tInput size: %s',prev_shared_data_file[0].get_value().shape)
+        logger.debug('\tLabel size: %s', prev_shared_data_file[1].get_value().shape)
+        logger.debug('\tData count: %s\n', prev_shared_data_file[2])
+        shared_data_file = make_shared(data_file[0],None,'inputs',False)
 
         logger.info("Input size: %s", shared_data_file[0].eval().shape)
         logger.debug("\t %.2f (min) %.2f (max)",np.min(data_file[0]),np.max(data_file[0]))
-        logger.info("Label size: %s", shared_data_file[1].eval().shape)
-        logger.debug('\t %.1f (min) %.1f (max)',np.min(data_file[1]),np.max(data_file[1]))
         logger.info("Count: %s\n", shared_data_file[2])
-
-        if prev_data_file is not None:
-            prev_shared_data_file = make_shared(prev_data_file[0],prev_data_file[1],'prev_inputs',False)
-        else:
-            prev_shared_data_file = None
 
         action = -1
 
@@ -978,7 +969,8 @@ def run(data_file,prev_data_file):
                     action,prob = test(prev_shared_data_file[0],1,model,hyperparam.model_type)
 
                 elif robot_type=='w':
-                    logger.info('Reversing straight ...\n')
+                    logger.info('Bumped, so predicting with previous data\n')
+                    action, prob = test(prev_shared_data_file[0], 1, model, hyperparam.model_type)
                 else:
                     raise NotImplementedError
 
@@ -992,9 +984,14 @@ def run(data_file,prev_data_file):
 
             algo_move_count += 1
 
+        logger.info('Synthesizing data IMAGE (%s) LASER (%s)...\n',episode-1,episode)
+
     else:
         logger.warning('Incompatible action received. Sending action 1')
         action=1
+
+    logger.info('Assigning prev_data the data_file (Episode %s)',episode)
+    prev_data[0] = data_file[0]
 
     # Persisting parameters
     if persist_every>0 and algo_move_count>0 and do_train and \
@@ -1054,7 +1051,7 @@ def run(data_file,prev_data_file):
 
     # check if obstacle hit
     # if obstacle hit wait for reverse
-    if not hit_obstacle:
+    if not i_bumped:
         logger.debug('Did not hit an obstacle. Executing action\n')
         action_pub.publish(action)
     else:
@@ -1097,8 +1094,6 @@ def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     plt.clf()
     plt.close('all')
 
-prev_data = None
-
 import scipy.misc
 def save_images_curr_prev(prev,curr):
     global episode
@@ -1108,26 +1103,18 @@ def save_images_curr_prev(prev,curr):
     scipy.misc.imsave('Images'+os.sep+'img'+str(episode)+'_1.jpg', prev_mat)
     scipy.misc.imsave('Images'+os.sep+'img'+str(episode)+'_2.jpg', curr_mat)
 
+
 def callback_data_save_status(msg):
 
-    global data_inputs,data_labels,prev_data,i_bumped,episode,run_mutex
-    global hit_obstacle,reversed,move_complete
+    global data_inputs,prev_data,i_bumped,episode,run_mutex
+    global reversed,move_complete
     global save_images
     global hyperparam
 
     initial_data = int(msg.data)
     logger.info('Data Received ...')
     input_count = data_inputs.shape[0]
-    label_count = data_labels.shape[0]
-    logger.info('currdata (before): %s, %s',data_inputs.shape,data_labels.shape)
-    if data_inputs.shape[0] != data_labels.shape[0]:
-        logger.warning('data and label counts are different. Matching')
-        if label_count >input_count:
-            for _ in range(label_count-input_count):
-                data_labels = np.delete(data_labels,-1,0)
-        if label_count < input_count:
-            for _ in range(input_count-label_count):
-                data_inputs = np.delete(data_inputs,-1,0)
+    logger.info('currdata (before): %s',data_inputs.shape)
 
     if data_inputs.shape[0]%hyperparam.batch_size!=0:
         logger.debug('Input count is not a factor of batchsize')
@@ -1136,29 +1123,25 @@ def callback_data_save_status(msg):
             logger.debug('Deleting %s inputs from total %s',data_inputs.shape[0]-num_batches*hyperparam.batch_size,data_inputs.shape[0])
 
             data_inputs = np.delete(data_inputs,np.s_[0:data_inputs.shape[0]-num_batches*hyperparam.batch_size],0)
-            data_labels = np.delete(data_labels,np.s_[0:data_labels.shape[0]-num_batches*hyperparam.batch_size],0)
             logger.debug('Total size after deleting %s',data_inputs.shape[0])
 
     # for the 1st iteration after terminating save_data script
     if i_bumped or initial_data==0:
         logger.info("Initial run after the break!")
-        #prev_data = None
         i_bumped = False
 
-    if prev_data is not None:
-        logger.info('prevdata: %s, %s\n',prev_data[0].shape,prev_data[1].shape)
+    logger.info('currdata (after): %s',data_inputs.shape)
 
-    logger.info('currdata (after): %s, %s',data_inputs.shape,data_labels.shape)
-
-    if data_inputs.shape[0]>0 and data_labels.shape[0]>0:
-        if save_images and (data_inputs is not None) and (prev_data is not None):
+    if data_inputs.shape[0]>0:
+        # This needs to be moved to run function or deleted. Because this might not work here
+        # coz prev_data gets assigned in the run function
+        '''if save_images and (data_inputs is not None) and (prev_data is not None):
                 logger.debug('Saving last image of previous and current image batches\n')
-                save_images_curr_prev(prev_data[0][-1],data_inputs[-1])
+                save_images_curr_prev(prev_data[0][-1],data_inputs[-1])'''
         try:
             run_mutex.acquire()
-            run([data_inputs,data_labels],prev_data)
-            if not hit_obstacle:
-                prev_data = [data_inputs,data_labels]
+            run([data_inputs])
+            i_bumped = False
 
         finally:
             run_mutex.release()
@@ -1166,69 +1149,50 @@ def callback_data_save_status(msg):
         logger.warning("\nNo data to run\n")
 
     move_complete = False
-    hit_obstacle = False
     reversed = False
 
 
 def callback_rev_data_save_status(msg):
-    global rev_data_inputs,rev_data_labels,run_mutex
+    global rev_data_inputs,run_mutex
     global hyperparam
     global prev_data
     global initial_run,i_bumped
 
     logger.info('Reversing Data Received ...')
     rev_input_count = rev_data_inputs.shape[0]
-    rev_label_count = rev_data_labels.shape[0]
-    logger.info('Only considering the last batch of data ...\n')
-    logger.info('curr_rev_data (before): %s, %s', data_inputs.shape, data_labels.shape)
-    rev_data_inputs = rev_data_inputs[-hyperparam.batch_size:,:]
-    rev_data_labels = rev_data_labels[-hyperparam.batch_size:]
-    logger.info('curr_rev_data (after): %s, %s\n', data_inputs.shape, data_labels.shape)
+    logger.info('Only considering the first batch of (reversed) data ...\n')
+    logger.info('curr_rev_data (before): %s', data_inputs.shape)
+    rev_data_inputs = rev_data_inputs[:hyperparam.batch_size,:]
+    logger.info('curr_rev_data (after): %s\n', data_inputs.shape)
 
-    if rev_input_count >= hyperparam.batch_size and rev_label_count >= hyperparam.batch_size:
+    if rev_input_count >= hyperparam.batch_size:
         logger.debug('Detected enough reverse data ...\n')
 
         try:
             logger.debug('Locking the run function...')
             run_mutex.acquire()
-            initial_run = True
+            #initial_run = True
+            #logger.debug('Setting initial_run %s',initial_run)
+            run([rev_data_inputs])
             i_bumped = False
-            logger.debug('Setting initial_run %s',initial_run)
             logger.debug('Setting i_bumped to %s\n', i_bumped)
-            run([rev_data_inputs, rev_data_labels], None)
-            if not hit_obstacle:
-                prev_data = [rev_data_inputs, rev_data_labels]
+            #TODO: MOVE PREV DATA ASSIGN TO TRAIN FUNC
         finally:
             run_mutex.release()
             logger.debug('Releasing the run function...\n')
+
 
 def callback_data_inputs(msg):
     global data_inputs,hyperparam
     global logger
     data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((-1,hyperparam.in_size))/255.
     data_inputs = data_inputs
-    #import scipy # use if you wanna check algo receive images correctly
-    #scipy.misc.imsave('rec_img'+str(episode)+'.jpg', data_inputs[-1].reshape(64,-1)*255)
-    logger.info('Recieved. Input size: %s',data_inputs.shape)
-
-
-def callback_data_labels(msg):
-    global data_labels,out_size
-    global logger
-    data_labels = np.asarray(msg.data,dtype=np.int32).reshape((-1,))
-    logger.info('Recieved. Label size: %s',data_labels.shape)
-
+    logger.info('Received. Input size: %s',data_inputs.shape)
 
 def callback_rev_data_inputs(msg):
     global rev_data_inputs,hyperparam,logger
     rev_data_inputs = np.asarray(msg.data,dtype=np.float32).reshape((-1,hyperparam.in_size))/255.
-    logger.info('Recieved. Reversed Input size: %s', rev_data_inputs.shape)
-
-
-def callback_rev_data_labels(msg):
-    global rev_data_labels,hyperparam,logger
-    rev_data_labels = np.asarray(msg.data, dtype=np.int32).reshape((-1,))
-    logger.info('Recieved. Reversed Label size: %s', rev_data_labels.shape)
+    logger.info('Received. Reversed Input size: %s', rev_data_inputs.shape)
 
 
 def callback_restored_bump(msg):
@@ -1238,9 +1202,9 @@ def callback_restored_bump(msg):
 
 
 def callback_obstacle_status(msg):
-    global  hit_obstacle,move_complete
-    hit_obstacle = True
+    global  move_complete,i_bumped
     move_complete = True
+    i_bumped = True
 
 
 def callback_path_finish(msg):
@@ -1252,11 +1216,13 @@ def callback_initial_run(msg):
     global  initial_run
     initial_run = True
 
+prev_data =[None,None]
+
 bumped_prev_ep = False # this is to fill bump pool in deeprl
 data_inputs = None
-data_labels = None
+
 rev_data_inputs = None
-rev_data_labels = None
+
 
 action_pub = None
 
@@ -1280,9 +1246,8 @@ last_persisted = 0
 # if False, we use i_bumped instances to add to pool
 pool_with_not_bump = True
 visualize_filters = True
-save_images = False
+save_images = True
 
-hit_obstacle = False
 reversed = False
 initial_run = False
 
@@ -1575,11 +1540,9 @@ if __name__ == '__main__':
 
     rospy.Subscriber("/data_sent_status", Int16, callback_data_save_status)
     rospy.Subscriber("/data_inputs", numpy_msg(Floats), callback_data_inputs)
-    rospy.Subscriber("/data_labels", numpy_msg(Floats), callback_data_labels)
 
     rospy.Subscriber("/rev_data_sent_status", Int16, callback_rev_data_save_status)
     rospy.Subscriber("/rev_data_inputs", numpy_msg(Floats), callback_rev_data_inputs)
-    rospy.Subscriber("/rev_data_labels", numpy_msg(Floats), callback_rev_data_labels)
 
     rospy.Subscriber("/restored_bump",Bool,callback_restored_bump)
     rospy.Subscriber("/obstacle_status", Bool, callback_obstacle_status)

@@ -22,6 +22,7 @@ import utils
 import logging
 import threading
 from os import system
+import signal
 
 def save_img(data):
     global image_dir,episode,img_seq_idx
@@ -142,9 +143,11 @@ def callback_cam(msg):
         logger.debug('Adding data to rev inputs ...')
         curr_rev_inputs.append(list(img_preprocessed))
 
+
 def callback_laser(msg):
-    global obstacle_msg_sent
-    global currLabels,currInputs
+    global obstacle_msg_sent,obstacle
+    global episode
+    global currInputs
     global reversing,isMoving,got_action
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
@@ -172,7 +175,7 @@ def callback_laser(msg):
         filtered_ranges = np.asarray(rangesNum)
         filtered_ranges[filtered_ranges<utils.NO_RETURN_THRESH] = 1000
 
-        logger.debug("Min range recorded:%.4f at laser count: %s",np.min(filtered_ranges),len(currLabels))
+        logger.debug("Min range recorded:%.4f at episode %s",np.min(filtered_ranges),episode)
 
         # middle part of laser [45:75]
         if np.min(filtered_ranges[laser_range_1[0]:laser_range_1[1]])<bump_thresh_1 or \
@@ -180,7 +183,6 @@ def callback_laser(msg):
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
 
             obstacle = True
-            currLabels.append(0)
 
             cmd = "rosservice call /autonomy/path_follower/cancel_request"
             system(cmd)
@@ -194,16 +196,15 @@ def callback_laser(msg):
                 logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
                 import time
                 import os
-                for l in range(len(currLabels)):
-                    currLabels[l] = 0
 
                 #save_data()
                 rospy.sleep(0.1)
                 obstacle_status_pub.publish(True)
 
+                logger.debug('Trigger_reverse is %s', trigger_reverse)
                 logger.debug('Triggering Reverse Switch ...\n')
                 trigger_reverse = True
-
+                logger.debug('Trigger_reverse set to %s',trigger_reverse)
                 if save_img_seq:
                     save_img(curr_cam_data)
                     pose_logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
@@ -213,22 +214,12 @@ def callback_laser(msg):
 
             else:
                 currInputs=[]
-                currLabels=[]
-
-
-
-        else:
-            currLabels.append(1)
-
-    global curr_rev_labels
 
     if faulty_encoder and isMoving and reversing:
         if save_img_seq:
             save_img(curr_cam_data)
             pose_logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
             img_seq_idx += 1
-        logger.debug('Adding data to rev labels ...')
-        curr_rev_labels.append(1)
 
 
 def stop_robot():
@@ -253,73 +244,74 @@ def reverse_robot():
     global cmd_vel_pub,restored_bump_pub
     global curr_pose,curr_ori
     global faulty_encoder
-    global trigger_reverse
+    global trigger_reverse,time_to_exit
 
-    logger.debug("Waiting for the trigger to be active\n")
-    while not trigger_reverse:
-        True
+    while True:
+        logger.debug("Waiting for the trigger to be active\n")
+        while not trigger_reverse and not time_to_exit:
+            True
 
-    logger.info("Reversing Robot ...\n")
-    reversing = True
-    if not faulty_encoder:
-        logger.debug("Posting cmd_vel messages backwards with a %.2f delay",utils.REVERSE_PUBLISH_DELAY)
-        for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
-            lin_vec = Vector3(-l[0],-l[1],-l[2])
-            ang_vec = Vector3(-a[0],-a[1],-a[2])
-            twist_msg = Twist()
-            twist_msg.linear = lin_vec
-            twist_msg.angular = ang_vec
-            rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
-            cmd_vel_pub.publish(twist_msg)
+        logger.info("Reversing Robot ...\n")
+        reversing = True
+        if not faulty_encoder:
+            logger.debug("Posting cmd_vel messages backwards with a %.2f delay",utils.REVERSE_PUBLISH_DELAY)
+            for l,a in zip(reversed(vel_lin_buffer),reversed(vel_ang_buffer)):
+                lin_vec = Vector3(-l[0],-l[1],-l[2])
+                ang_vec = Vector3(-a[0],-a[1],-a[2])
+                twist_msg = Twist()
+                twist_msg.linear = lin_vec
+                twist_msg.angular = ang_vec
+                rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
+                cmd_vel_pub.publish(twist_msg)
 
-        # publish last twist message so the robot reverse a bit more
-        for _ in range(5):
-            rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
-            cmd_vel_pub.publish(twist_msg)
+            # publish last twist message so the robot reverse a bit more
+            for _ in range(5):
+                rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
+                cmd_vel_pub.publish(twist_msg)
 
-        logger.debug("Finished posting cmd_vel messages backwards ...\n")
-        rospy.sleep(0.5)
-        logger.debug("Posting zero cmd_vel messages with %.2f delay",utils.ZERO_VEL_PUBLISH_DELAY)
-        for _ in range(100):
-            rospy.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
-            twist_msg = Twist()
-            twist_msg.linear = Vector3(0,0,0)
-            twist_msg.angular = Vector3(0,0,0)
+            logger.debug("Finished posting cmd_vel messages backwards ...\n")
+            rospy.sleep(0.5)
+            logger.debug("Posting zero cmd_vel messages with %.2f delay",utils.ZERO_VEL_PUBLISH_DELAY)
+            for _ in range(100):
+                rospy.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
+                twist_msg = Twist()
+                twist_msg.linear = Vector3(0,0,0)
+                twist_msg.angular = Vector3(0,0,0)
 
-            cmd_vel_pub.publish(twist_msg)
-        logger.debug("Finished posting zero cmd_vel messages ...\n")
+                cmd_vel_pub.publish(twist_msg)
+            logger.debug("Finished posting zero cmd_vel messages ...\n")
 
-    else:
-        ang_vec = Vector3(0,0,0)
-        buf_length = len(vel_lin_buffer)
-        logger.debug("Posting half of cmd_vel (%s) messages with %.2f delay", buf_length,utils.ZERO_VEL_PUBLISH_DELAY)
-        reversed(vel_lin_buffer)
-        reversed(vel_ang_buffer)
-        for l, a in zip(vel_lin_buffer[:buf_length//2], vel_ang_buffer[:buf_length//2]):
-            lin_vec = Vector3(-l[0],-l[1],-l[2])
-            twist_msg = Twist()
-            twist_msg.linear = lin_vec
-            twist_msg.angular = ang_vec
-            rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
-            cmd_vel_pub.publish(twist_msg)
+        else:
+            ang_vec = Vector3(0,0,0)
+            buf_length = len(vel_lin_buffer)
+            logger.debug("Posting last of cmd_vel (%s) messages with %.2f delay", buf_length,utils.ZERO_VEL_PUBLISH_DELAY)
+            reversed(vel_lin_buffer)
+            reversed(vel_ang_buffer)
+            for _ in range(10):
+                lin_vec = Vector3(-vel_lin_buffer[0][0],-vel_lin_buffer[0][1],-vel_lin_buffer[0][2])
+                twist_msg = Twist()
+                twist_msg.linear = lin_vec
+                twist_msg.angular = ang_vec
+                rospy.sleep(utils.REVERSE_PUBLISH_DELAY)
+                cmd_vel_pub.publish(twist_msg)
 
-        rospy.sleep(0.5)
-        logger.debug("Posting zero cmd_vel messages with %.2f delay", utils.ZERO_VEL_PUBLISH_DELAY)
-        for _ in range(10):
-            rospy.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
-            twist_msg = Twist()
-            twist_msg.linear = Vector3(0, 0, 0)
-            twist_msg.angular = Vector3(0, 0, 0)
+            rospy.sleep(0.5)
+            logger.debug("Posting zero cmd_vel messages with %.2f delay", utils.ZERO_VEL_PUBLISH_DELAY)
+            for _ in range(10):
+                rospy.sleep(utils.ZERO_VEL_PUBLISH_DELAY)
+                twist_msg = Twist()
+                twist_msg.linear = Vector3(0, 0, 0)
+                twist_msg.angular = Vector3(0, 0, 0)
 
-            cmd_vel_pub.publish(twist_msg)
-        logger.debug("Finished posting zero cmd_vel messages ...\n")
-        save_rev_data()
+                cmd_vel_pub.publish(twist_msg)
+            logger.debug("Finished posting zero cmd_vel messages ...\n")
+            save_rev_data()
 
-    trigger_reverse = False
-    logger.debug("Reverse Trigger turned off ...\n")
-    reversing = False
-    restored_bump_pub.publish(True)
-    logger.info("Reverse finished ...\n")
+        trigger_reverse = False
+        logger.debug("Reverse Trigger turned off ...\n")
+        reversing = False
+        restored_bump_pub.publish(True)
+        logger.info("Reverse finished ...\n")
 
 # we use this call back to detect the first ever move after termination of move_exec_robot script
 # after that we use callback_action_status
@@ -373,8 +365,9 @@ def callback_path_finish(msg):
     global curr_pose,curr_ori
     global episode
     global logger
-    global currInputs,currLabels
-
+    global currInputs
+    global trigger_reverse
+    
     if int(msg.data)==1:
         logger.info("Sending data as a ROS message...\n")
         move_complete = True
@@ -383,7 +376,8 @@ def callback_path_finish(msg):
             save_data()
         else:
             logger.info('Reached end of path, but hit obstacle...\n')
-            
+            trigger_reverse = True
+
         time.sleep(0.1)
         if isMoving:
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
@@ -393,10 +387,6 @@ def callback_path_finish(msg):
         if save_img_seq:
                 save_img(curr_cam_data)
                 pose_logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
-
-        logger.info("Data summary for episode %s",episode)
-        logger.info("\tImage count: %s",len(currInputs))
-        logger.info('\tLaser count: %s\n',len(currLabels))
 
 def callback_action_status(msg):
     global isMoving, move_complete,got_action
@@ -427,14 +417,12 @@ def callback_cmd_vel(msg):
 def save_rev_data():
     import time
 
-    global curr_rev_inputs,curr_rev_labels
-    global sent_rev_input_pub, sent_rev_label_pub,rev_data_status_pub
+    global curr_rev_inputs
+    global sent_rev_input_pub,rev_data_status_pub
 
     curr_rev_inputs.reverse()
-    curr_rev_labels.reverse()
 
     sent_rev_input_pub.publish(np.asarray(curr_rev_inputs, dtype=np.float32).reshape((-1, 1)))
-    sent_rev_label_pub.publish(np.asarray(curr_rev_labels, dtype=np.float32).reshape((-1, 1)))
 
     time.sleep(0.1)
 
@@ -442,29 +430,36 @@ def save_rev_data():
 
     logger.info("Rev Data summary for episode %s", episode)
     logger.info("\tImage (REV) count: %s", len(curr_rev_inputs))
-    logger.info('\tLaser (REV) count: %s\n', len(curr_rev_labels))
+    curr_rev_inputs = []
 
 
 def save_data():
     import time    
     
-    global currInputs,currLabels,initial_data
+    global currInputs,initial_data
     global data_status_pub,sent_input_pub,sent_label_pub
     global got_action
 
     sent_input_pub.publish(np.asarray(currInputs,dtype=np.float32).reshape((-1,1)))
-    sent_label_pub.publish(np.asarray(currLabels,dtype=np.float32).reshape((-1,1)))
     time.sleep(0.1)
     if initial_data:
         data_status_pub.publish(0)
     else:
         data_status_pub.publish(1)
 
+    logger.info("Data summary for episode %s", episode)
+    logger.info("\tImage count: %s", len(currInputs))
+
     currInputs=[]
-    currLabels=[]
     initial_data = False
     got_action = False
 
+
+def exit_this(signum,frame):
+    global time_to_exit
+    logger.info('Time to Exit. Bye!')
+    time_to_exit = True
+    sys.exit(0)
 logging_level = logging.DEBUG
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
@@ -477,6 +472,8 @@ got_action = True
 initial_data = True
 move_complete = False
 obstacle = False
+time_to_exit = False
+
 
 prevPose = None
 data_status_pub = None
@@ -507,7 +504,6 @@ episode = 0
 image_updown = False
 
 curr_rev_inputs = []
-curr_rev_labels = []
 
 faulty_encoder = True
 
@@ -570,7 +566,6 @@ if __name__=='__main__':
         pose_logger.addHandler(fh)
 
     currInputs = []
-    currLabels = []
 
     cam_skip = (utils.CAMERA_FREQUENCY/utils.PREF_FREQUENCY)
     laser_skip = (utils.LASER_FREQUENCY/utils.PREF_FREQUENCY)
@@ -601,11 +596,9 @@ if __name__=='__main__':
     #rate = rospy.Rate(1)
     data_status_pub = rospy.Publisher(utils.DATA_SENT_STATUS, Int16, queue_size=10)
     sent_input_pub = rospy.Publisher(utils.DATA_INPUT_TOPIC, numpy_msg(Floats), queue_size=10)
-    sent_label_pub = rospy.Publisher(utils.DATA_LABEL_TOPIC, numpy_msg(Floats), queue_size=10)
 
     rev_data_status_pub = rospy.Publisher(utils.REV_DATA_SENT_STATUS, Int16, queue_size=10)
     sent_rev_input_pub = rospy.Publisher(utils.REV_DATA_INPUT_TOPIC, numpy_msg(Floats), queue_size=10)
-    sent_rev_label_pub = rospy.Publisher(utils.REV_DATA_LABEL_TOPIC, numpy_msg(Floats), queue_size=10)
 
     obstacle_status_pub = rospy.Publisher(utils.OBSTACLE_STATUS_TOPIC,Bool, queue_size=10)
     cmd_vel_pub = rospy.Publisher(utils.CMD_VEL_TOPIC,Twist,queue_size=10)
@@ -618,8 +611,9 @@ if __name__=='__main__':
     rospy.Subscriber(utils.ACTION_STATUS_TOPIC, Int16, callback_action_status)
     rospy.Subscriber(utils.CMD_VEL_TOPIC,Twist,callback_cmd_vel)
 
+    signal.signal(signal.SIGINT,exit_this)
+
     rev_thread = threading.Thread(target=reverse_robot())
     rev_thread.start()
-
     #rate.sleep()
     rospy.spin() # this will block untill you hit Ctrl+C
