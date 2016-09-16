@@ -1389,16 +1389,16 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'DeepRLMultiSoftmax'
+        hyperparam.model_type = 'SDAEMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
+        hyperparam.learning_rate = 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
         hyperparam.batch_size = 5
         #hyperparam.train_batch_count = 2
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [64,48,32] #256,192,128 SDAE 64,48,32 DEEPRL
+        hyperparam.hid_sizes = [256,192,128] #256,192,128 SDAE 64,48,32 DEEPRL
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
