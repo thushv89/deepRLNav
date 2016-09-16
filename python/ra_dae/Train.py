@@ -587,7 +587,7 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
     global episode
     global logger,logging_level,logging_format
     global time_logger
-    global bumped_prev_ep
+    global bumped_prev_ep,num_bumps
     model.process(T.matrix('x'), T.matrix('y'),training=True)
 
     arc = 0
@@ -629,6 +629,7 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
             # we've bumped
             if i_bumped:
 
+                num_bumps += 1
                 logger.warning('Bumped after taking action %s', last_action)
 
                 train_adaptive_prev = model.train_func(
@@ -1145,7 +1146,7 @@ def callback_data_save_status(msg):
         logger.warning("\nNo data to run\n")
 
     move_complete = False
-    robot_reversed = False
+    robot_reversed= False
 
 
 def callback_rev_data_save_status(msg):
