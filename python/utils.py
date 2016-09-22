@@ -2,7 +2,7 @@
 
 ############# THE MOST IMPORTANT SETTING ################
 
-TYPE = 'REAL' #SIM or REAL
+TYPE = 'SIM' #SIM or REAL
 
 #########################################################
 
