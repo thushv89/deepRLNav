@@ -1392,13 +1392,13 @@ if __name__ == '__main__':
         hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
+        hyperparam.learning_rate = 0.01 if hyperparam.model_type=='DeepRLMultiSoftmax' else 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
         hyperparam.batch_size = 5
         #hyperparam.train_batch_count = 2
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [64,48,32] #256,192,128 SDAE 64,48,32 DEEPRL
+        hyperparam.hid_sizes = [64,48,32] if hyperparam.model_type=='DeepRLMultiSoftmax' else [256,192,128] #256,192,128 SDAE 64,48,32 DEEPRL
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
