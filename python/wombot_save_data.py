@@ -105,7 +105,7 @@ def callback_cam(msg):
 def callback_laser(msg):
     global obstacle_msg_sent
     global currLabels,currInputs
-    global reversing,isMoving,got_action
+    global reversing,isMoving,got_action,obstacle
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
     global save_img_seq, curr_cam_data,img_seq_idx
@@ -141,7 +141,7 @@ def callback_laser(msg):
                         np.min(filtered_ranges[laser_range_2[0]:laser_range_2[1]])<bump_thresh_0_2:
 
             obstacle = True
-
+	    logger.debug("setting Obstacle to True")
            
             currLabels.append(0)
 
@@ -151,9 +151,9 @@ def callback_laser(msg):
 	    logger.debug("Called cancel path request ...\n")
             logger.debug('Reverse lock acquired ...')
             if not move_complete:
-		logger.info("Posting 0 cmd_vel data ...")
-		stop_robot()
-		logger.info("Finished posting 0 cmd_vel data ...")
+                logger.info("Posting 0 cmd_vel data ...")
+                stop_robot()
+                logger.info("Finished posting 0 cmd_vel data ...")
                 logger.debug("Was still moving and bumped ...\n")
                 logger.debug('Laser recorded min distance of: %.4f',np.min(filtered_ranges))
                 import time
@@ -289,24 +289,27 @@ def callback_path_finish(msg):
     global logger
     global currInputs,currLabels
 
-    if int(msg.data)==1:
+    logger.debug("Recieved callback_path_finish: %s",msg.data)
+    time.sleep(0.05)
+    if bool(msg.data)==True or (bool(msg.data)==False and not obstacle):
+        logger.debug("msg.data: %s, obstacle: %s",msg.data,obstacle)
         logger.info("Sending data as a ROS message...\n")
-        move_complete = True
+        logger.debug("Set move_complete to True")
 
         if not obstacle:
+            move_complete=True
             save_data()
         else:
             logger.info('Reached end of path, but hit obstacle...\n')
             
-        time.sleep(0.1)
         if isMoving:
             cmd = 'rosservice call /autonomy/path_follower/cancel_request'
             system(cmd)
             logger.info('Robot was still moving. Manually killing the path')
 
         if save_img_seq:
-                save_img(curr_cam_data)
-                pose_logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
+            save_img(curr_cam_data)
+            pose_logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
 
         logger.info("Data summary for episode %s",episode)
         logger.info("\tImage count: %s",len(currInputs))

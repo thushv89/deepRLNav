@@ -1007,6 +1007,22 @@ def run(data_file,prev_data_file):
 
         last_persisted = algo_move_count
 
+    # assign last_action
+    last_action = action
+    last_act_prob = prob
+    bumped_prev_ep = i_bumped
+    logger.info('Last action: %s\n', last_action)
+
+    # logger for number of bumps
+    if algo_move_count>0 and algo_move_count % bump_count_window == 0:
+        logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s, Weighted Bumps, %s',
+                     algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep),weighted_bumps)
+        bump_logger.info('%s,%s,%s',algo_move_count,(num_bumps-prev_log_bump_ep),weighted_bumps)
+        prev_log_bump_ep = num_bumps
+        weighted_bumps = 0.0
+
+    episode += 1
+
     if visualize_filters and algo_move_count>0 and visualize_every>0 and do_train and \
                     last_visualized!=algo_move_count and algo_move_count%visualize_every==0:
         if hyperparam.model_type == 'DeepRLMultiSoftmax':
@@ -1023,22 +1039,6 @@ def run(data_file,prev_data_file):
             raise NotImplementedError
 
         last_visualized = algo_move_count
-
-    # assign last_action
-    last_action = action
-    last_act_prob = prob
-    bumped_prev_ep = i_bumped
-    logger.info('Last action: %s\n', last_action)
-
-    # logger for number of bumps
-    if algo_move_count>0 and algo_move_count % bump_count_window == 0:
-        logger.debug('Printing to bump_logger: Episodes (%s-%s), Bumps %s, Weighted Bumps, %s',
-                     algo_move_count,algo_move_count-bump_count_window,(num_bumps-prev_log_bump_ep),weighted_bumps)
-        bump_logger.info('%s,%s,%s',algo_move_count,(num_bumps-prev_log_bump_ep),weighted_bumps)
-        prev_log_bump_ep = num_bumps
-        weighted_bumps = 0.0
-
-    episode += 1
 
     # wait till the move complete to publish action
     logger.debug('Waiting for the move to complete')
@@ -1389,16 +1389,16 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'SDAEMultiSoftmax'
+        hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
+        hyperparam.learning_rate = 0.01 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
         hyperparam.batch_size = 5
         #hyperparam.train_batch_count = 2
 
         hyperparam.epochs = 1
 
-        hyperparam.hid_sizes = [256,192,128] #256,192,128 SDAE 64,48,32 DEEPRL
+        hyperparam.hid_sizes = [64,48,32] #256,192,128 SDAE 64,48,32 DEEPRL
         hyperparam.init_sizes = []
         hyperparam.init_sizes.extend(hyperparam.hid_sizes)
 
