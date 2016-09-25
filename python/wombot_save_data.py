@@ -46,6 +46,7 @@ def callback_cam(msg):
     global pose_logger,curr_ori,curr_pose
     global save_img_seq
     global logger
+    global episode,algo_episode
 
     cam_count += 1
     if cam_count%cam_skip != 0:
@@ -55,7 +56,7 @@ def callback_cam(msg):
 
         if img_seq_idx%utils.IMG_SAVE_SKIP==0:
             save_img(msg.data)
-            pose_logger.info("%s,%s,%s", episode,img_seq_idx, curr_pose + curr_ori)
+            pose_logger.info("%s,%s,%s,%s", episode,img_seq_idx, algo_episode, curr_pose + curr_ori)
 
         img_seq_idx += 1
         curr_cam_data = msg.data	
@@ -333,6 +334,10 @@ def callback_action_status(msg):
     episode += 1
     logger.info('Episode: %s',episode)
 
+def callback_algo_episode(msg):
+    global algo_episode
+    algo_episode = int(msg)
+
 def callback_cmd_vel(msg):
     global vel_lin_buffer,vel_ang_buffer,isMoving,obstacle,reversing
     if isMoving and not reversing and not obstacle:
@@ -399,6 +404,7 @@ image_dir = None
 img_seq_idx = 0
 curr_cam_data = None
 episode = 0
+algo_episode = 0
 image_updown = False
 
 reverse_lock = threading.Lock()
@@ -407,6 +413,7 @@ if __name__=='__main__':
 
     global save_img_seq,image_dir,logger,pose_logger,logging_level,logging_format
     global episode
+    global algo_episode
 
     import getopt
     import os.path
@@ -499,6 +506,7 @@ if __name__=='__main__':
     rospy.Subscriber(utils.ODOM_TOPIC, Odometry, callback_odom)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
     rospy.Subscriber(utils.ACTION_STATUS_TOPIC, Int16, callback_action_status)
+    rospy.subscriber(utils.EPISODE_STATUS_TOPIC, Int16, callback_algo_episode)
     rospy.Subscriber(utils.CMD_VEL_TOPIC,Twist,callback_cmd_vel)
 
     #rate.sleep()

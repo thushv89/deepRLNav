@@ -912,6 +912,7 @@ def run(data_file,prev_data_file):
     global initial_run
     global hit_obstacle,reversed,move_complete
     global weighted_bumps,last_act_prob
+    global action_pub,episode_pub
 
     logger.info('\nEPISODIC INFORMATION \n')
     logger.info('Episode: %s',episode)
@@ -1051,6 +1052,7 @@ def run(data_file,prev_data_file):
     if not hit_obstacle:
         logger.debug('Did not hit an obstacle. Executing action\n')
         action_pub.publish(action)
+        episode_pub.publish(episode)
     else:
         logger.debug('Hit an obstacle. Waiting for reverse to complete')
         temp_i = 0
@@ -1064,7 +1066,7 @@ def run(data_file,prev_data_file):
         # we do not publish if the while loop terminated of timeout
         if temp_i<100:
             action_pub.publish(action)
-
+            episode_pub.publish(episode)
 
 def create_image_grid(filters,aspect_ratio,fig_id,layer_idx):
     import matplotlib
@@ -1209,7 +1211,7 @@ bumped_prev_ep = False # this is to fill bump pool in deeprl
 data_inputs = None
 data_labels = None
 action_pub = None
-
+episode_pub = None
 
 hyperparam = None
 episode=0
@@ -1308,7 +1310,7 @@ if __name__ == '__main__':
 
     global restore_last, do_train, persist_every, bump_count_window, visualize_every
     global logger, logging_level, logging_format, bump_logger, action_prob_logger
-    global action_pub
+    global action_pub,episode_pub
 
     import getopt
     import os
@@ -1389,7 +1391,7 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'DeepRLMultiSoftmax'
+        hyperparam.model_type = 'SDAEMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
         hyperparam.learning_rate = 0.01 if hyperparam.model_type=='DeepRLMultiSoftmax' else 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
@@ -1516,6 +1518,7 @@ if __name__ == '__main__':
 
     rospy.init_node("deep_rl_node")
     action_pub = rospy.Publisher('action_status', Int16, queue_size=10)
+    episode_pub = rospy.Publisher('current_episode',Int16,queue_size=10)
     rospy.Subscriber("/data_sent_status", Int16, callback_data_save_status)
     rospy.Subscriber("/data_inputs", numpy_msg(Floats), callback_data_inputs)
     rospy.Subscriber("/data_labels", numpy_msg(Floats), callback_data_labels)

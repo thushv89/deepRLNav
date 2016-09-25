@@ -2,7 +2,7 @@
 
 ############# THE MOST IMPORTANT SETTING ################
 
-TYPE = 'REAL' #SIM or REAL
+TYPE = 'SIM' #SIM or REAL
 
 #########################################################
 
@@ -14,6 +14,7 @@ CMD_VEL_TOPIC = "/wombot/cmd_vel" if TYPE == 'REAL' else "/cmd_vel" #sim /cmd_ve
 
 #MY TOPICS
 ACTION_STATUS_TOPIC = "/action_status"
+EPISODE_STATUS_TOPIC = "/current_episode"
 DATA_SENT_STATUS = "/data_sent_status"
 DATA_INPUT_TOPIC = "/data_inputs"
 DATA_LABEL_TOPIC = "/data_labels"
