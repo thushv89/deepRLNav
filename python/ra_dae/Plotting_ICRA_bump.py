@@ -14,58 +14,76 @@ filenames = ['bump_log_train_sim_ra.log','bump_log_train_sim_sd.log','bump_log_t
 sim_ra_bump_nw = []
 sim_ra_bump_w = []
 
+drop_count = 2
 with open(filenames[0], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',')
+    j=0
     for row in bumpreader:
         i=0
+        if j<drop_count:
+            continue
         for col in row:
             if i==1:
                 sim_ra_bump_nw.append(float(col))
             elif i==2:
                 sim_ra_bump_w.append(float(col))
             i+=1
-
+        j+=1
 sim_sd_bump_nw = []
 sim_sd_bump_w = []
 with open(filenames[1], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+    j=0
     for row in bumpreader:
         i=0
+        if j<drop_count:
+            continue
+
         for col in row:
             if i==1:
                 sim_sd_bump_nw.append(float(col))
             elif i==2:
                 sim_sd_bump_w.append(float(col))
             i+=1
+        j+=1
 
 office_ra_bump_nw = []
 office_ra_bump_w = []
 with open(filenames[2], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+    j=0
     for row in bumpreader:
         i=0
+        if j<drop_count:
+            continue
         for col in row:
             if i==1:
                 office_ra_bump_nw.append(float(col))
             elif i==2:
                 office_ra_bump_w.append(float(col))
             i+=1
+        j+=1
 
 office_sd_bump_nw = []
 office_sd_bump_w = []
+
 with open(filenames[3], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+    j=0
     for row in bumpreader:
         i=0
+        if j<drop_count:
+            continue
         for col in row:
             if i==1:
                 office_sd_bump_nw.append(float(col))
             elif i==2:
                 office_sd_bump_w.append(float(col))
             i+=1
+        j+=1
 
-x_vals = np.arange(len(office_sd_bump_nw)) * 25 + 25
-sim_x_vals = np.arange(len(sim_sd_bump_nw)) * 25 + 25
+x_vals = (25*drop_count)+ np.arange(len(office_sd_bump_nw)) * 25 + 25
+sim_x_vals = (25*drop_count) +  np.arange(len(sim_sd_bump_nw)) * 25 + 25
 
 def slide_window(data,avg_type='normal'):
     data_slide = []
