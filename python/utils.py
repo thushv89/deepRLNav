@@ -33,7 +33,7 @@ IMG_SAVE_SKIP = 5 # how many images skipped when saving sequence
 BUMP_1_THRESH = 0.25 if TYPE=='REAL' else 0.6 #sim 0.6 real 0.2
 BUMP_02_THRESH = 0.18 if TYPE=='REAL' else 0.7 #sim 0.7 real 0.25
 NO_RETURN_THRESH = 0.05
-REVERSE_PUBLISH_DELAY = 0.15 # real 0.12
+REVERSE_PUBLISH_DELAY = 0.2 # real 0.12
 ZERO_VEL_PUBLISH_DELAY = 0.01 # publish 0 valued cmd_vel data
 
 #LASER

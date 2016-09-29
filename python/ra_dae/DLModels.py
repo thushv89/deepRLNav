@@ -12,7 +12,7 @@ import sys
 import logging
 import random
 
-logging_level = logging.DEBUG
+logging_level = logging.INFO
 logging_format = '[%(name)s] [%(funcName)s] %(message)s'
 
 
@@ -738,8 +738,6 @@ class SDAEMultiSoftmax(Transformer):
                 return True
 
         return check_forward_func
-
-    #TODO SDAEMultisoftmax set and get POOL
 
     def visualize_nodes(self,learning_rate,iterations,layer_idx,use_scan=False):
         return self.sdae_set[0].visualize_nodes(learning_rate,iterations,layer_idx,use_scan)
@@ -1750,6 +1748,7 @@ class DeepReinforcementLearningModelMultiSoftmax(object):
 
     def update_train_distribution(self, t_distribution,drl_id):
         self.deepRL_set[drl_id].update_train_distribution(t_distribution)
+        self.deepRL_set[drl_id].update_train_distribution(t_distribution)
 
     def get_predictions_func(self, arc, x, batch_size, transformed_x = identity):
 
@@ -1960,14 +1959,17 @@ class MergeIncDAE(Transformer):
 
 class LogisticRegression(object):
 
-    def __init__(self,layer,hparams):
+    def __init__(self,layer,hparams,out_size=None):
         self.learning_rate = hparams.learning_rate
         self.batch_size = hparams.batch_size
         self.in_size = hparams.in_size
-        self.out_size = hparams.out_size
+        if out_size is None:
+            self.out_size = hparams.out_size
+        else:
+            self.out_size = out_size
 
         self.iterations = hparams.iterations
-
+        self.lam = hparams.lam
         self.sym_x,self.sym_y = None,None
 
         self.W = layer.W
@@ -1976,13 +1978,17 @@ class LogisticRegression(object):
         self.p_y_given_x,self.y_pred = None,None
         self.cost = None
 
-    def process(self):
+    def process(self,single_node_softmax=True):
         self.sym_x = T.matrix('x')  # data, presented as rasterized images
-        self.sym_y = T.ivector('y')  # labels, presented as 1D vector of [int] labels
+        self.sym_y = T.matrix('y')  # labels, presented as 1D vector of [int] labels
 
-        self.p_y_given_x = T.nnet.softmax(T.dot(self.sym_x, self.W) + self.b)
-        self.y_pred = T.argmax(self.p_y_given_x, axis=1)
-        self.cost = -T.mean(T.log(self.p_y_given_x)[T.arange(self.sym_y.shape[0]), self.sym_y])
+        if single_node_softmax:
+            self.p_y_given_x = T.nnet.sigmoid(T.dot(self.sym_x, self.W) + self.b)
+            self.cost = T.mean(T.nnet.binary_crossentropy(self.p_y_given_x, self.sym_y)) + self.lam**2 * (T.sum(T.sum(self.W**2)))
+            #self.cost = T.mean((self.p_y_given_x-self.sym_y)**2) + self.lam**2 * (T.sum(T.sum(self.W**2)))
+        else:
+            self.p_y_given_x = T.nnet.softmax(T.dot(self.sym_x, self.W) + self.b)
+            self.cost = -T.mean(T.log(self.p_y_given_x)[T.arange(self.sym_y.shape[0]), self.sym_y]) + self.lam**2 * (T.sum(self.W**2))
 
     def train_func(self,x,y,learning_rate = None):
         if learning_rate is None:
@@ -1999,9 +2005,16 @@ class LogisticRegression(object):
 
         train_func = theano.function(inputs=[idx],outputs=self.cost,givens=given,updates=updates)
 
+        if logging_level==logging.DEBUG:
+            pred_y_func = theano.function(inputs=[idx],outputs=self.p_y_given_x,givens=given,updates=None,on_unused_input='warn')
+
         def train_batch(batch_id):
             for _ in range(self.iterations):
                 cost = train_func(batch_id)
+
+                if logging_level == logging.DEBUG:
+                    print "Predicted y: %s",pred_y_func(batch_id)
+
                 print "Negative log cost: %.3f"%cost
         return train_batch
 
@@ -2029,3 +2042,59 @@ class LogisticRegression(object):
                                    self.sym_x : x[idx * batch_size : (idx + 1) * batch_size]
                                }, updates=None)
 
+
+class LogisticRegressionMultiSoftmax(object):
+
+    def __init__(self,layers,hparams):
+
+        self.lrms_logger = logging.getLogger('LR-MS' + str(random.randint(0, 1000)))
+        self.lrms_logger.setLevel(logging_level)
+        console = logging.StreamHandler(sys.stdout)
+        console.setFormatter(logging.Formatter(logging_format))
+        console.setLevel(logging_level)
+        self.lrms_logger.addHandler(console)
+
+        self.learning_rate = hparams.learning_rate
+        self.batch_size = hparams.batch_size
+        self.in_size = hparams.in_size
+        self.out_size = hparams.out_size
+
+        self.layers = layers
+
+        self.iterations = hparams.iterations
+        self.lr_set = []
+
+        single_lr = []
+        for l in layers:
+            self.lr_set.append(LogisticRegression(l, hparams,1))
+
+    def process(self):
+        for lr in self.lr_set:
+            lr.process(single_node_softmax=True)
+
+    def train_func(self, x, y, learning_rate, batch_size, lr_id, apply_x=identity):
+        return self.lr_set[lr_id].train_func(x,y,learning_rate)
+
+    def get_predictions_func(self, arc, x, batch_size, transformed_x=identity):
+        funcs = []
+        for lr in self.lr_set:
+            tmp = lr.get_predictions_func(x, batch_size)
+            funcs.append(tmp)
+        return funcs
+
+    def check_forward(self, x, y, batch_size, transformed_x=identity):
+        idx = T.iscalar('idx')
+        sym_y = T.ivector('y_deeprl')
+
+        forward_func = theano.function([idx], sym_y, givens={
+            sym_y: y[idx * batch_size: (idx + 1) * batch_size]
+        })
+
+        def check_forward_func(batch_id):
+            tmp_out = forward_func(batch_id)
+            if tmp_out[-1] == 0:
+                return False
+            else:
+                return True
+
+        return check_forward_func
