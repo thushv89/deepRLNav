@@ -247,7 +247,13 @@ def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
         elif hparams.model_type == 'LogisticRegression':
             W,b,b_prime = layer_params[0]
             layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, W, b, b_prime,init_sizes[0])]
-
+        elif hparams.model_type == 'LRMultiSoftmax':
+            layers = []
+            logger.debug('Restoring layers for %s...', hparams.model_type)
+            for param,size in zip(layer_params,init_sizes[0]):
+                W,b,b_prime = param
+                layers.append(NNLayer.Layer(hparams.in_size,1,False,W,b,b_prime,size))
+                logger.debug('\tLayer restored to size %s(W),%s(b),%s(b_prime)',W.shape,b.shape,b_prime.shape)
         elif hparams.model_type == 'SDAE':
             layers = make_layers(hparams,layer_params,init_sizes)
 
@@ -261,6 +267,13 @@ def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
             layers = make_layers(hparams)
         elif hparams.model_type == 'LogisticRegression':
             layers = [NNLayer.Layer(hparams.in_size, hparams.out_size, False, None, None, None,None)]
+        elif hparams.model_type == 'LRMultiSoftmax':
+            layers = [NNLayer.Layer(hparams.in_size, 1, False, None, None, None,None) for _ in range(hparams.out_size)]
+            for i,nn_layer in enumerate(layers):
+                logger.info('Creating (i=%s) W: %s', i, nn_layer.W.get_value().shape)
+                logger.info('Creating (i=%s) b: %s', i, nn_layer.b.get_value().shape)
+                logger.info('Creating (i=%s) b_prime: %s', i, nn_layer.b_prime.get_value().shape)
+                logger.info('Creating (i=%s) init_size: %s\n', i, nn_layer.initial_size)
         elif hparams.model_type == 'SDAE':
             layers = make_layers(hparams)
 
@@ -335,18 +348,15 @@ def make_model(hparams, restore_data=None,restore_pool=None,restore_logs=None):
 
             model.restore_pool(hparams.batch_size, X, Y, size_list, pos_list)
 
-
-
     elif hparams.model_type == 'LogisticRegression':
         logger.info('CREATING LOGISTIC REGRESSION ...\n')
         model = DLModels.LogisticRegression(layers[0],hparams)
 
-    return model
+    elif hparams.model_type == 'LRMultiSoftmax':
+        logger.info('CREATING LOGISTIC REGRESSION MULTISOFTMAX ...\n')
+        model = DLModels.LogisticRegressionMultiSoftmax(layers,hparams)
 
-# KEEP THIS AS 1 otherwise can lead to issues
-last_action = 1 # this is important for DeepRLMultiLogreg
-i_bumped = False
-num_bumps = 0
+    return model
 
 def train_sdae_multi_softmax(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
     global episode
@@ -524,11 +534,7 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
     global time_logger,episode
 
     model.process()
-
-
-
     check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
-
     i_bumped = False
 
     for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
@@ -577,6 +583,60 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
     time_logger.info('%s, %.3f',episode,(end_time-start_time))
     return
 
+def train_lr_multisoftmax(batch_size, data_file, prev_data_file, learning_rate, model, model_type):
+    global logger,logging_level,logging_format
+    global last_action,num_bumps,i_bumped
+    global time_logger,episode
+
+    model.process()
+    check_fwd = model.check_forward(data_file[0], data_file[1], batch_size)
+    i_bumped = False
+
+    for t_batch in range(int(ceil(data_file[2]*1.0 / batch_size))):
+        if not check_fwd(t_batch):
+            i_bumped = True
+            num_bumps += 1
+            break
+
+    if not i_bumped:
+        logger.info('Didnt bump. yay!!!')
+        logger.debug('I took correct action %s',last_action)
+
+        y_tmp = []
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(1.)
+        train_prev = model.train_func(
+            prev_data_file[0],
+            theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1, 1)), learning_rate, batch_size, last_action)
+        # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+
+        start_time = time.clock()
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                               int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+            train_prev(p_t_batch)
+        end_time = time.clock()
+
+    if i_bumped:
+
+        logger.info('Bumped after taking action %s', last_action)
+        y_tmp = []
+        for i in range(prev_data_file[0].get_value().shape[0]):
+            y_tmp.append(0.)
+        train_prev = model.train_func(
+            prev_data_file[0],
+            theano.shared(np.asarray(y_tmp, dtype=theano.config.floatX).reshape(-1, 1)), learning_rate, batch_size, last_action)
+        # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
+
+        start_time = time.clock()
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
+                               int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+            train_prev(p_t_batch)
+        end_time = time.clock()
+
+
+    logger.info('Time taken for the episode: %10.3f (mins)', (end_time-start_time)/60)
+    time_logger.info('%s, %.3f',episode,(end_time-start_time))
+    return
 
 def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_epochs, learning_rate, model, model_type):
     global episode
@@ -694,17 +754,18 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
     layer_sizes = []
     policy_infos = []
 
-    for l in layers[:-1]:
-        W_tensor,b_tensor,b_prime_tensor = l.get_params()
-        W,b,b_prime = W_tensor.get_value(borrow=True),b_tensor.get_value(borrow=True),b_prime_tensor.get_value(borrow=True)
+    if updated_hparam.model_type != 'LRMultiSoftmax':
+        for l in layers[:-1]:
+            W_tensor,b_tensor,b_prime_tensor = l.get_params()
+            W,b,b_prime = W_tensor.get_value(borrow=True),b_tensor.get_value(borrow=True),b_prime_tensor.get_value(borrow=True)
 
-        layer_sizes.append(W.shape)
-        lyr_params.append((W,b,b_prime))
-        logger.debug('W type: %s',type(W))
-        logger.debug('b type: %s',type(b))
-        logger.debug('b_prime type: %s',type(b_prime))
-        assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
-        logger.debug('W,b,b_prime added as numpy arrays')
+            layer_sizes.append(W.shape)
+            lyr_params.append((W,b,b_prime))
+            logger.debug('W type: %s',type(W))
+            logger.debug('b type: %s',type(b))
+            logger.debug('b_prime type: %s',type(b_prime))
+            assert isinstance(W,np.ndarray) and isinstance(b,np.ndarray) and isinstance(b_prime,np.ndarray)
+            logger.debug('W,b,b_prime added as numpy arrays')
 
     if updated_hparam.model_type == 'DeepRLMultiSoftmax' :
         multi_softmax_layer_params = []
@@ -752,9 +813,24 @@ def persist_parameters(updated_hparam,layers,all_policies,pools,logs,deeprl_time
         lyr_params.append(multi_softmax_layer_params)
         layer_sizes.append(softmax_layer_sizes)
 
+    elif updated_hparam.model_type == 'LRMultiSoftmax':
+        layer_sizes_temp = []
+        for l in layers:
+            W_T,b_T,b_prime_T = l.get_params()
+            W,b,b_prime = W_T.get_value(borrow=True),b_T.get_value(borrow=True),b_prime_T.get_value(borrow=True)
+            assert isinstance(W, np.ndarray) and isinstance(b, np.ndarray) and isinstance(b_prime,np.ndarray)
+            lyr_params.append([W,b,b_prime])
+            layer_sizes_temp.append(W.shape)
+
+        layer_sizes.append(layer_sizes_temp)
+
     elif updated_hparam.model_type == 'SDAE':
         W_tensor,b_tensor,b_prime_tensor = layers[-1].get_params()
         W,b,b_prime = W_tensor.get_value(borrow=True),b_tensor.get_value(borrow=True),b_prime_tensor.get_value(borrow=True)
+
+        logger.debug('W type_soft: %s', type(W))
+        logger.debug('b type_soft: %s', type(b))
+        logger.debug('b_prime_soft type: %s', type(b_prime))
 
         layer_sizes.append(W.shape)
         lyr_params.append((W,b,b_prime))
@@ -827,10 +903,12 @@ def test(shared_data_file_x,arc,model, model_type):
         model.process(training=False)
     elif model_type == 'LogisticRegression':
         model.process()
+    elif model_type == 'LRMultiSoftmax':
+        model.process()
     elif model_type == 'SDAE':
         model.process(training=False)
 
-    if model_type == 'DeepRLMultiSoftmax' or model_type=='SDAEMultiSoftmax':
+    if model_type == 'DeepRLMultiSoftmax' or model_type=='SDAEMultiSoftmax' or model_type=='LRMultiSoftmax':
         get_proba_func = model.get_predictions_func(arc, shared_data_file_x, hyperparam.batch_size)
         last_idx = int(ceil(shared_data_file_x.eval().shape[0]*1.0/hyperparam.batch_size))-1
         logger.debug('Last idx: %s',last_idx)
@@ -870,9 +948,11 @@ def test(shared_data_file_x,arc,model, model_type):
         random_threshold = 0.25
         certain_threshold = 0.5
 
-    elif model_type == 'DeepRLMultiSoftmax' or 'SDAEMultiSoftmax':
+    elif model_type == 'DeepRLMultiSoftmax' or model_type== 'SDAEMultiSoftmax' or model_type== 'LRMultiSoftmax':
         random_threshold = 0.5 * (1. - hyperparam.dropout) * 0.9
         certain_threshold = 0.95
+    else:
+        raise NotImplementedError
 
     idx_above_thresh = np.where(probs>random_threshold)[0]
     is_all_below_low_thresh = np.all(probs<random_threshold)
@@ -953,6 +1033,8 @@ def run(data_file,prev_data_file):
                            hyperparam.pre_epochs, hyperparam.finetune_epochs, hyperparam.learning_rate, model, hyperparam.model_type)
             elif hyperparam.model_type == 'LogisticRegression':
                 train_logistic_regression(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
+            elif hyperparam.model_type == 'LRMultiSoftmax':
+                train_lr_multisoftmax(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
             elif hyperparam.model_type == 'SDAE':
                 train_sdae(hyperparam.batch_size,shared_data_file,prev_shared_data_file,hyperparam.learning_rate,model,hyperparam.model_type)
             elif hyperparam.model_type == 'SDAEMultiSoftmax':
@@ -1001,11 +1083,12 @@ def run(data_file,prev_data_file):
             updated_hparams = copy.copy(hyperparam)
             updated_hparams.hid_sizes = model.get_updated_hid_sizes()
             persist_parameters(updated_hparams,model.layers, model._controller, model.get_pool_data(), model.get_logs(), model.get_time_for_deeprls())
-        if hyperparam.model_type == 'SDAEMultiSoftmax':
+        elif hyperparam.model_type == 'SDAEMultiSoftmax':
             persist_parameters(hyperparam,model.layers, None, model.get_pool_data(), None, None)
-        if hyperparam.model_type== 'SDAE':
+        elif hyperparam.model_type== 'SDAE':
             persist_parameters(hyperparam,model.layers, None, None, None, None)
-
+        elif hyperparam.model_type == 'LRMultiSoftmax':
+            persist_parameters(hyperparam,model.layers, None, None, None, None)
         last_persisted = algo_move_count
 
     # assign last_action
@@ -1024,7 +1107,7 @@ def run(data_file,prev_data_file):
 
     episode += 1
 
-    if visualize_filters and algo_move_count>0 and visualize_every>0 and do_train and \
+    if hyperparam.model_type == 'DeepRLMultiSoftmax' and visualize_filters and algo_move_count>0 and visualize_every>0 and do_train and \
                     last_visualized!=algo_move_count and algo_move_count%visualize_every==0:
         if hyperparam.model_type == 'DeepRLMultiSoftmax':
             for layer_idx in range(len(hyperparam.hid_sizes)):
@@ -1036,7 +1119,9 @@ def run(data_file,prev_data_file):
                 filters = model.visualize_nodes(hyperparam.learning_rate * 2., 75, layer_idx, 'sigmoid')
                 create_image_grid(filters, hyperparam.aspect_ratio, algo_move_count, layer_idx)
 
-        if hyperparam.model_type == 'SDAEMultisoftmax':
+        if hyperparam.model_type == 'SDAEMultiSoftmax':
+            raise NotImplementedError
+        if hyperparam.model_type == 'LRMultiSoftmax':
             raise NotImplementedError
 
         last_visualized = algo_move_count
@@ -1065,6 +1150,8 @@ def run(data_file,prev_data_file):
         # we publish the action only if we recieved reserved signal
         # we do not publish if the while loop terminated of timeout
         if temp_i<100:
+            if hyperparam.model_type=='LRMultiSoftmax':
+                time.sleep(2.0)
             action_pub.publish(action)
             episode_pub.publish(episode)
 
@@ -1206,6 +1293,11 @@ def callback_path_finish(msg):
 def callback_initial_run(msg):
     global  initial_run
     initial_run = True
+
+# KEEP THIS AS 1 otherwise can lead to issues
+last_action = 1 # this is important for DeepRLMultiLogreg
+i_bumped = False
+num_bumps = 0
 
 bumped_prev_ep = False # this is to fill bump pool in deeprl
 data_inputs = None
@@ -1391,10 +1483,15 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'SDAEMultiSoftmax'
+        hyperparam.model_type = 'LRMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        hyperparam.learning_rate = 0.01 if hyperparam.model_type=='DeepRLMultiSoftmax' else 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
+        if hyperparam.model_type == 'DeepRLMultiSoftmax':
+            hyperparam.learning_rate = 0.01
+        elif hyperparam.model_type=='LRMultiSoftmax':
+            hyperparam.learning_rate = 0.001
+        else:
+            hyperparam.learning_rate = 0.05 #0.01 multisoftmax, 0.05 SDAE, 0.2 logistic
         hyperparam.batch_size = 5
         #hyperparam.train_batch_count = 2
 
