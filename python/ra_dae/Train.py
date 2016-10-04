@@ -1136,6 +1136,8 @@ def run(data_file,prev_data_file):
     # if obstacle hit wait for reverse
     if not hit_obstacle:
         logger.debug('Did not hit an obstacle. Executing action\n')
+        if hyperparam.model_type=='LRMultiSoftmax':
+                time.sleep(2.0)
         action_pub.publish(action)
         episode_pub.publish(episode)
     else:

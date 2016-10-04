@@ -44,7 +44,7 @@ def callback_cam(msg):
     global reversing,isMoving,got_action
     global cam_skip,cam_count,img_seq_idx,curr_cam_data
     global pose_logger,curr_ori,curr_pose
-    global save_img_seq
+    global save_img_seq,image_dir
     global logger
     global episode,algo_episode
 
@@ -52,10 +52,11 @@ def callback_cam(msg):
     if cam_count%cam_skip != 0:
         return
 
-    if save_img_seq and ((isMoving and got_action) or reversing):
+    if (image_dir is not None) and ((isMoving and got_action) or reversing):
 
         if img_seq_idx%utils.IMG_SAVE_SKIP==0:
-            save_img(msg.data)
+	    if save_img_seq:
+		save_img(msg.data)
             pose_logger.info("%s,%s,%s,%s", episode,img_seq_idx, algo_episode, curr_pose + curr_ori)
 
         img_seq_idx += 1
@@ -109,7 +110,7 @@ def callback_laser(msg):
     global reversing,isMoving,got_action,obstacle
     global laser_range_0,laser_range_1,laser_range_2
     global laser_skip,laser_count
-    global save_img_seq, curr_cam_data,img_seq_idx
+    global save_img_seq, curr_cam_data,img_seq_idx,image_dir
     global pose_logger, logger, curr_pose,curr_ori
     global reverse_lock
 
@@ -151,7 +152,7 @@ def callback_laser(msg):
 	    system(cmd)
 	    logger.debug("Called cancel path request ...\n")
             logger.debug('Reverse lock acquired ...')
-            if not move_complete:
+            save_img_seqif not move_complete:
                 logger.info("Posting 0 cmd_vel data ...")
                 stop_robot()
                 logger.info("Finished posting 0 cmd_vel data ...")
@@ -167,8 +168,9 @@ def callback_laser(msg):
                 rospy.sleep(0.1)
                 obstacle_status_pub.publish(True)
 
-                if save_img_seq:
-                    save_img(curr_cam_data)
+                if image_dir is not None:
+		    if save_img_seq:
+			save_img(curr_cam_data)
                     pose_logger.info("%s,%s", img_seq_idx, curr_pose + curr_ori)
                     img_seq_idx += 1
 
@@ -284,7 +286,7 @@ def callback_path_finish(msg):
     import time
     global move_complete,isMoving,obstacle
     global cam_count,laser_count
-    global save_img_seq,img_seq_idx,curr_cam_data
+    global save_img_seq,img_seq_idx,curr_cam_data,image_dir
     global curr_pose,curr_ori
     global episode
     global logger
@@ -308,8 +310,9 @@ def callback_path_finish(msg):
             system(cmd)
             logger.info('Robot was still moving. Manually killing the path')
 
-        if save_img_seq:
-            save_img(curr_cam_data)
+        if image_dir is not None:
+	    if save_img_seq:
+		save_img(curr_cam_data)
             pose_logger.info("%s,%s,%s",episode,img_seq_idx,curr_pose+curr_ori)
 
         logger.info("Data summary for episode %s",episode)
@@ -336,7 +339,7 @@ def callback_action_status(msg):
 
 def callback_algo_episode(msg):
     global algo_episode
-    algo_episode = int(msg)
+    algo_episode = int(msg.data)
 
 def callback_cmd_vel(msg):
     global vel_lin_buffer,vel_ang_buffer,isMoving,obstacle,reversing
@@ -456,7 +459,7 @@ if __name__=='__main__':
         img_seq_idx = int(f[-1].split(',')[1]) + 1
         episode = int(f[-1].split(',')[0]) + 1
 
-    if save_img_seq and image_dir is not None:
+    if image_dir is not None:
         pose_logger = logging.getLogger('TrajectoryLogger')
         pose_logger.setLevel(logging.INFO)
         fh = logging.FileHandler(image_dir+os.sep+'trajectory.log')
@@ -506,7 +509,7 @@ if __name__=='__main__':
     rospy.Subscriber(utils.ODOM_TOPIC, Odometry, callback_odom)
     rospy.Subscriber("/autonomy/path_follower_result",Bool,callback_path_finish)
     rospy.Subscriber(utils.ACTION_STATUS_TOPIC, Int16, callback_action_status)
-    rospy.subscriber(utils.EPISODE_STATUS_TOPIC, Int16, callback_algo_episode)
+    rospy.Subscriber(utils.EPISODE_STATUS_TOPIC, Int16, callback_algo_episode)
     rospy.Subscriber(utils.CMD_VEL_TOPIC,Twist,callback_cmd_vel)
 
     #rate.sleep()
