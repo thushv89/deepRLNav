@@ -152,7 +152,7 @@ def callback_laser(msg):
 	    system(cmd)
 	    logger.debug("Called cancel path request ...\n")
             logger.debug('Reverse lock acquired ...')
-            save_img_seqif not move_complete:
+            if not move_complete:
                 logger.info("Posting 0 cmd_vel data ...")
                 stop_robot()
                 logger.info("Finished posting 0 cmd_vel data ...")
