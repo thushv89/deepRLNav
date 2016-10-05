@@ -10,13 +10,13 @@ window_size = 5
 avg_type = 'normal'
 learning_rate = 0.4
 
-filenames = ['bump_log_train_sim_ra.log','bump_log_train_sim_sd.log','bump_log_train_sim_lr.log','bump_log_train_office_ra.log','bump_log_train_office_sd.log','bump_log_train_outdoor_ra.log','bump_log_train_outdoor_sd.log']
+filenames = ['bump_log_train_sim_ra.log','bump_log_train_sim_sd.log','bump_log_train_sim_lr.log','bump_log_train_office_ra.log','bump_log_train_office_sd.log','bump_log_train_office_lr.log','bump_log_train_outdoor_ra.log','bump_log_train_outdoor_sd.log','bump_log_train_outdoor_lr.log']
 sim_ra_bump_nw = []
 sim_ra_bump_w = []
 
 legend_fontsize = 8
 
-only_upper_row = False
+only_upper_row = True
 
 if uncertainity_per_bump:
     y_lims = [(4,16),(8,16),(4,14),(0.1,0.9),(0.3,0.65),(0.3,0.8)]
@@ -111,9 +111,27 @@ with open(filenames[4], 'rt') as csvfile:
                 office_sd_bump_w.append(float(col))
             i+=1
 
+office_lr_bump_nw = []
+office_lr_bump_w = []
+
+with open(filenames[5], 'rt') as csvfile:
+    bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+    j=0
+    for row in bumpreader:
+        i=0
+        if j<drop_count:
+            j+=1
+            continue
+        for col in row:
+            if i==1:
+                office_lr_bump_nw.append(float(col))
+            elif i==2:
+                office_lr_bump_w.append(float(col))
+            i+=1
+
 outdoor_ra_bump_nw = []
 outdoor_ra_bump_w = []
-with open(filenames[5], 'rt') as csvfile:
+with open(filenames[6], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
     j=0
     for row in bumpreader:
@@ -132,7 +150,7 @@ with open(filenames[5], 'rt') as csvfile:
 outdoor_sd_bump_nw = []
 outdoor_sd_bump_w = []
 
-with open(filenames[6], 'rt') as csvfile:
+with open(filenames[7], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
     j=0
     for row in bumpreader:
@@ -145,6 +163,25 @@ with open(filenames[6], 'rt') as csvfile:
                 outdoor_sd_bump_nw.append(float(col))
             elif i==2:
                 outdoor_sd_bump_w.append(float(col))
+            i+=1
+
+
+outdoor_lr_bump_nw = []
+outdoor_lr_bump_w = []
+
+with open(filenames[8], 'rt') as csvfile:
+    bumpreader = csv.reader(csvfile, delimiter=',', quotechar='|')
+    j=0
+    for row in bumpreader:
+        i=0
+        if j<drop_count:
+            j+=1
+            continue
+        for col in row:
+            if i==1:
+                outdoor_lr_bump_nw.append(float(col))
+            elif i==2:
+                outdoor_lr_bump_w.append(float(col))
             i+=1
 
 x_vals = (25*drop_count)+ np.arange(len(office_sd_bump_nw)) * 25 + 25
@@ -243,18 +280,24 @@ if uncertainity_per_bump:
 
     office_ra_bump_w = [office_ra_bump_w[i]/office_ra_bump_nw[i] for i in range(len(office_ra_bump_w))]
     office_sd_bump_w = [office_sd_bump_w[i]/office_sd_bump_nw[i] for i in range(len(office_sd_bump_w))]
+    office_lr_bump_w = [office_lr_bump_w[i]/office_lr_bump_nw[i] for i in range(len(office_lr_bump_w))]
 
     outdoor_ra_bump_w = [outdoor_ra_bump_w[i]/outdoor_ra_bump_nw[i] for i in range(len(outdoor_ra_bump_w))]
     outdoor_sd_bump_w = [outdoor_sd_bump_w[i]/outdoor_sd_bump_nw[i] for i in range(len(outdoor_sd_bump_w))]
+    outdoor_lr_bump_w = [outdoor_lr_bump_w[i]/outdoor_lr_bump_nw[i] for i in range(len(outdoor_lr_bump_w))]
 
     lr = 0.75
     sim_ra_avg,sim_ra_std = get_exp_average_stdev_single(sim_ra_bump_w,lr)
     sim_sd_avg,sim_sd_std = get_exp_average_stdev_single(sim_sd_bump_w,lr)
     sim_lr_avg,sim_lr_std = get_exp_average_stdev_single(sim_lr_bump_w,lr)
+
     office_ra_avg,office_ra_std = get_exp_average_stdev_single(office_ra_bump_w,lr)
     office_sd_avg,office_sd_std = get_exp_average_stdev_single(office_sd_bump_w,lr)
+    office_lr_avg,office_lr_std = get_exp_average_stdev_single(office_lr_bump_w,lr)
+
     outdoor_ra_avg,outdoor_ra_std = get_exp_average_stdev_single(outdoor_ra_bump_w,lr)
     outdoor_sd_avg,outdoor_sd_std = get_exp_average_stdev_single(outdoor_sd_bump_w,lr)
+    outdoor_lr_avg,outdoor_lr_std = get_exp_average_stdev_single(outdoor_lr_bump_w,lr)
 
     print('Single average stdev')
     print('RA-DAE')
@@ -280,11 +323,15 @@ if not sliding_window:
         ax2.plot(x_vals, office_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
         ax2.plot(x_vals, office_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
         ax2.plot(x_vals, office_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
+        ax2.plot(x_vals, office_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
+        ax2.plot(x_vals, office_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
         ax3.plot(out_x_vals, outdoor_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
         ax3.plot(out_x_vals, outdoor_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
         ax3.plot(out_x_vals, outdoor_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
         ax3.plot(out_x_vals, outdoor_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
+        ax3.plot(out_x_vals, outdoor_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
+        ax3.plot(out_x_vals, outdoor_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
     else:
         ax1.plot(sim_x_vals, sim_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
@@ -298,11 +345,15 @@ if not sliding_window:
         ax5.plot(x_vals, office_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
         ax2.plot(x_vals, office_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
         ax5.plot(x_vals, office_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
+        ax2.plot(x_vals, office_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
+        ax5.plot(x_vals, office_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
         ax3.plot(out_x_vals, outdoor_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
         ax6.plot(out_x_vals, outdoor_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
         ax3.plot(out_x_vals, outdoor_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
         ax6.plot(out_x_vals, outdoor_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
+        ax3.plot(out_x_vals, outdoor_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
+        ax6.plot(out_x_vals, outdoor_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
 else:
 
@@ -318,33 +369,41 @@ else:
         office_ra_bump_nw_slide=slide_window_v2(office_ra_bump_nw)
         office_sd_bump_w_slide = slide_window_v2(office_sd_bump_w)
         office_sd_bump_nw_slide = slide_window_v2(office_sd_bump_nw)
+        office_lr_bump_w_slide = slide_window_v2(office_lr_bump_w)
+        office_lr_bump_nw_slide = slide_window_v2(office_lr_bump_nw)
 
         outdoor_ra_bump_w_slide=slide_window_v2(outdoor_ra_bump_w)
         outdoor_ra_bump_nw_slide=slide_window_v2(outdoor_ra_bump_nw)
         outdoor_sd_bump_w_slide = slide_window_v2(outdoor_sd_bump_w)
         outdoor_sd_bump_nw_slide = slide_window_v2(outdoor_sd_bump_nw)
+        outdoor_lr_bump_w_slide = slide_window_v2(outdoor_lr_bump_w)
+        outdoor_lr_bump_nw_slide = slide_window_v2(outdoor_lr_bump_nw)
 
         ax1.plot(sim_x_vals, sim_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
         ax1.plot(sim_x_vals, sim_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
-        ax1.plot(sim_x_vals, sim_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='o')
+        ax1.plot(sim_x_vals, sim_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
 
         if not only_upper_row:
             ax1.plot(sim_x_vals, sim_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
             ax1.plot(sim_x_vals, sim_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
-            ax1.plot(sim_x_vals, sim_lr_bump_w_slide, 'y', label='Weighted bumps (LR)',marker='x')
+            ax1.plot(sim_x_vals, sim_lr_bump_w_slide, 'y', label='Weighted bumps (LR)',marker='s')
 
 
         ax2.plot(x_vals, office_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
         ax2.plot(x_vals, office_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
+        ax2.plot(x_vals, office_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
         if not only_upper_row:
             ax2.plot(x_vals, office_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
             ax2.plot(x_vals, office_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
+            ax2.plot(x_vals, office_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
 
         ax3.plot(out_x_vals, outdoor_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
         ax3.plot(out_x_vals, outdoor_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
+        ax3.plot(out_x_vals, outdoor_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
         if not only_upper_row:
             ax3.plot(out_x_vals, outdoor_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
             ax3.plot(out_x_vals, outdoor_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
+            ax3.plot(out_x_vals, outdoor_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
 
     else:
         sim_ra_bump_w_slide=slide_window_v2(sim_ra_bump_w)
@@ -358,11 +417,15 @@ else:
         office_ra_bump_nw_slide=slide_window_v2(office_ra_bump_nw)
         office_sd_bump_w_slide = slide_window_v2(office_sd_bump_w)
         office_sd_bump_nw_slide = slide_window_v2(office_sd_bump_nw)
+        office_lr_bump_w_slide = slide_window_v2(office_lr_bump_w)
+        office_lr_bump_nw_slide = slide_window_v2(office_lr_bump_nw)
 
         outdoor_ra_bump_w_slide=slide_window_v2(outdoor_ra_bump_w)
         outdoor_ra_bump_nw_slide=slide_window_v2(outdoor_ra_bump_nw)
         outdoor_sd_bump_w_slide = slide_window_v2(outdoor_sd_bump_w)
         outdoor_sd_bump_nw_slide = slide_window_v2(outdoor_sd_bump_nw)
+        outdoor_lr_bump_w_slide = slide_window_v2(outdoor_lr_bump_w)
+        outdoor_lr_bump_nw_slide = slide_window_v2(outdoor_lr_bump_nw)
 
         ax1.plot(sim_x_vals, sim_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
         ax4.plot(sim_x_vals, sim_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
@@ -375,11 +438,15 @@ else:
         ax5.plot(x_vals, office_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
         ax2.plot(x_vals, office_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
         ax5.plot(x_vals, office_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
+        ax2.plot(x_vals, office_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
+        ax5.plot(x_vals, office_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
 
         ax3.plot(out_x_vals, outdoor_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
         ax6.plot(out_x_vals, outdoor_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
         ax3.plot(out_x_vals, outdoor_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
         ax6.plot(out_x_vals, outdoor_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
+        ax3.plot(out_x_vals, outdoor_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
+        ax6.plot(out_x_vals, outdoor_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
 
 ax1.set_title('Simulation')
 ax1.set_xlabel('Episode')
