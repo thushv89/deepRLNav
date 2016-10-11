@@ -53,6 +53,10 @@ for name in img_names:
 fourcc = cv2.cv.CV_FOURCC(*'XVID')
 video = cv2.VideoWriter('video.avi',fourcc,3,(width,height),1)
 
+rect_h = 100
+rect_w = 40
+rect_x0 = 350
+padding_w = 5
 for i in range(np.max(file_name_dict.keys())//10):
     while len(file_name_dict[i])>0:
         fname = dir+'/img'+str(i)+'_'+str(np.min(file_name_dict[i]))+'.png'
@@ -65,6 +69,17 @@ for i in range(np.max(file_name_dict.keys())//10):
         cv2.putText(img, fname_display,(50, 50),cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,255),2)
         cv2.putText(img, episode_display,(50, 75),cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,255),2)
         cv2.putText(img, probs_display,(300, 460),cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,255),2)
+
+        rect_x0_prob = 350
+        for p in prob_dict[algo_ep]:
+            rect_y1_prob = int(rect_h*p)
+            if p<0.45:
+                color = (0,0,255)
+            else:
+                color = (0,255,0)
+            cv2.rectangle(img, (rect_x0_prob ,420), (rect_x0_prob+rect_w,420-rect_y1_prob), color, -1)
+            rect_x0_prob = rect_x0_prob + rect_w + padding_w
+
         video.write(img)
 
 video.release()
