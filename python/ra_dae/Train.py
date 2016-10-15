@@ -397,11 +397,9 @@ def train_sdae_multi_softmax(batch_size, data_file, prev_data_file, learning_rat
             # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
             start_time = time.clock()
-            pool_choice = random.choice(
-                range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+            pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size))))
             logger.debug('Pooling choice: %s', pool_choice)
-            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                                   int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
                 pretrain_prev(p_t_batch)
                 if pool_choice == p_t_batch:
 
@@ -427,11 +425,9 @@ def train_sdae_multi_softmax(batch_size, data_file, prev_data_file, learning_rat
             )
 
             start_time = time.clock()
-            pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                                              int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+            pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size))))
             logger.debug('Pooling choice: %s', pool_choice)
-            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                                   int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+            for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
                 pretrain_prev(p_t_batch)
                 if pool_choice == p_t_batch:
                     finetune_prev(p_t_batch, True)
@@ -481,10 +477,10 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         start_time = time.clock()
 
         pool_choice = random.choice(
-            range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+            range(int(ceil(prev_data_file[2] * 1.0 / batch_size))))
         logger.debug('Pooling choice: %s', pool_choice)
 
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             pre_train_func(p_t_batch)
             if pool_choice == p_t_batch:
                 finetune_func(p_t_batch, True)
@@ -516,7 +512,7 @@ def train_sdae(batch_size, data_file, prev_data_file, learning_rate, model, mode
         #    range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))))
         #logger.debug('Pooling choice: %s', pool_choice)
 
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             pre_train_func(p_t_batch)
             finetune_func(p_t_batch, False)
 
@@ -555,7 +551,7 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
         train = model.train_func(
             prev_data_file[0], T.cast(shared_y,'int32'))
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train(p_t_batch)
         end_time = time.clock()
 
@@ -575,7 +571,7 @@ def train_logistic_regression(batch_size, data_file, prev_data_file, learning_ra
             prev_data_file[0],T.cast(shared_y,'int32'),learning_rate=learning_rate/2.0)
 
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2), int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train(p_t_batch)
         end_time = time.clock()
 
@@ -611,8 +607,7 @@ def train_lr_multisoftmax(batch_size, data_file, prev_data_file, learning_rate, 
         # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                               int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train_prev(p_t_batch)
         end_time = time.clock()
 
@@ -628,8 +623,7 @@ def train_lr_multisoftmax(batch_size, data_file, prev_data_file, learning_rate, 
         # for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
         start_time = time.clock()
-        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                               int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+        for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
             train_prev(p_t_batch)
         end_time = time.clock()
 
@@ -686,9 +680,9 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
 
                 start_time = time.clock()
-                pool_choice = random.choice(range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))))
+                pool_choice = random.choice(range(int(ceil(prev_data_file[2]*1.0/batch_size))))
                 logger.debug('Pooling choice: %s',pool_choice)
-                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size)/2),int(ceil(prev_data_file[2]*1.0/batch_size))):
+                for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
                     if pool_choice == p_t_batch:
 
                         logger.debug('Bumped previous episode? %s',bumped_prev_ep)
@@ -721,11 +715,9 @@ def train_multi_softmax(batch_size, data_file, prev_data_file, pre_epochs, fine_
                     theano.shared(np.asarray(y,dtype=theano.config.floatX)), batch_size,last_action)
                 #for p_t_batch in range(int(ceil(prev_data_file[2]*1.0/batch_size))):
                 start_time = time.clock()
-                pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                                                  int(ceil(prev_data_file[2] * 1.0 / batch_size))))
+                pool_choice = random.choice(range(int(ceil(prev_data_file[2] * 1.0 / batch_size))))
                 logger.debug('Pooling choice: %s', pool_choice)
-                for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size) / 2),
-                                       int(ceil(prev_data_file[2] * 1.0 / batch_size))):
+                for p_t_batch in range(int(ceil(prev_data_file[2] * 1.0 / batch_size))):
                     if pool_choice == p_t_batch:
                         train_adaptive_prev(p_t_batch, True, True)
                         logger.debug('Adding %s batch to pool and bump_pool', p_t_batch)
@@ -1485,11 +1477,11 @@ if __name__ == '__main__':
         hyperparam.aspect_ratio = [128,58]
         hyperparam.out_size = 3
         # DeepRLMultiSoftmax or LogisticRegression or SDAE or SDAEMultiSoftmax
-        hyperparam.model_type = 'LRMultiSoftmax'
+        hyperparam.model_type = 'DeepRLMultiSoftmax'
         hyperparam.activation = 'sigmoid'
         hyperparam.dropout = 0.
-        if hyperparam.model_type == 'DeepRLMultiSoftmax':
-            hyperparam.learning_rate = 0.01
+        if hyperparam.model_type == 'DeepRLMultiSoftmax': #used 0.01 as LR for all experiments in bump plots
+            hyperparam.learning_rate = 0.002
         elif hyperparam.model_type=='LRMultiSoftmax':
             hyperparam.learning_rate = 0.001
         else:
