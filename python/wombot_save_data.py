@@ -25,6 +25,7 @@ from os import system
 import pickle
 from multiprocessing import Pool
 from copy import deepcopy
+import tf
 
 def callback_cam(msg):
     global reversing,isMoving,got_action
@@ -34,13 +35,22 @@ def callback_cam(msg):
     global logger
     global episode,algo_episode
     global image_updown,unproc_cam_data
-
+    
     #print "saw image, %i,%s,%s,%s"%(cam_count,got_action,isMoving,reversing)
     if image_dir is not None and ((got_action and isMoving) or reversing):
         if img_seq_idx%utils.IMG_SAVE_SKIP==0:
+            
             if save_img_seq:
                 curr_cam_data.append((msg.data,episode,img_seq_idx))
-            save_pose_data.append((episode,img_seq_idx,algo_episode,curr_pose+curr_ori))
+            try:
+                #listener.waitForTransform("map","base_link",rospy.Time.now(),rospy.Duration(3.0));
+                (curr_pose,curr_ori) = listener.lookupTransform("map", "base_link",rospy.Time(0));
+                save_pose_data.append((episode,img_seq_idx,algo_episode,curr_pose+curr_ori))
+                logger.info("save pose ..")
+                #time.sleep(0.1)
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                logger.info("No transform detected")
+            
         img_seq_idx += 1
             
     cam_count += 1
@@ -195,6 +205,7 @@ def reverse_robot():
     #save_img_seq_thread = threading.Thread(target=save_img_sequence_pose_threading())
     #save_img_seq_thread.start()
     save_img_sequence_pose()
+    logger.info('Saving images finished...')
 
 # we use this call back to detect the first ever move after termination of move_exec_robot script
 # after that we use callback_action_status
@@ -210,9 +221,14 @@ def callback_odom(msg):
     
     data = msg
     pose = data.pose.pose # has position and orientation
-     
-    curr_pose = [float(pose.position.x),float(pose.position.y),float(pose.position.z)]
-    curr_ori = [float(pose.orientation.x),float(pose.orientation.y),float(pose.orientation.z),float(pose.orientation.w)]
+    
+    #try:
+        #listener.waitForTransform("map","base_link",rospy.Time.now(),rospy.Duration(3.0));
+        #(curr_pose,curr_ori) = listener.lookupTransform("map", "base_link",rospy.Time(0));
+    #except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+    #    logger.info("No transform detected")
+    #curr_pose = [float(pose.position.x),float(pose.position.y),float(pose.position.z)]
+    #curr_ori = [float(pose.orientation.x),float(pose.orientation.y),float(pose.orientation.z),float(pose.orientation.w)]
 
     if not reversing:
     	x = float(pose.position.x)
@@ -275,7 +291,7 @@ def callback_path_finish(msg):
             #save_img_seq_thread = threading.Thread(target=save_img_sequence_pose_threading())
             #save_img_seq_thread.start()
             save_img_sequence_pose()
-           
+            logger.info("Saving images finished ...")
         else:
             logger.info('Reached end of path, but hit obstacle...\n')
             
@@ -294,6 +310,9 @@ def save_img_sequence_pose():
     curr_cam_data=[]
     save_pose_data=[]
 
+    logger.info("Storage summary for episode %s",episode)
+    logger.info('\tImage count: %s\n',len(copy_cam_data))
+    logger.info("\tPose count: %s",len(copy_pose_data))
     pose_ep = copy_pose_data[0][0]
     if image_dir is not None:
         if save_img_seq:
@@ -497,7 +516,11 @@ image_updown = False
 
 reverse_lock = threading.Lock()
 save_data_thread = None
+tf_lookup_thread = None
 pool = None
+
+listener = None
+storing_img = False
 
 from os import listdir
 from os.path import isfile,join
@@ -513,6 +536,7 @@ if __name__=='__main__':
 
     
     
+
     logger = logging.getLogger('Logger')
     logger.setLevel(logging.DEBUG)
     console = logging.StreamHandler(sys.stdout)
@@ -603,6 +627,10 @@ if __name__=='__main__':
 
     rospy.init_node("save_data_node")
     #rate = rospy.Rate(1)
+    listener = tf.TransformListener()
+    #tf_lookup_thread = threading.Thread(target=save_pose_via_lookup_tf())
+    #tf_lookup_thread.start()
+
     data_status_pub = rospy.Publisher(utils.DATA_SENT_STATUS, Int16, queue_size=10)
     sent_input_pub = rospy.Publisher(utils.DATA_INPUT_TOPIC, numpy_msg(Floats), queue_size=10)
     sent_label_pub = rospy.Publisher(utils.DATA_LABEL_TOPIC, numpy_msg(Floats), queue_size=10)
