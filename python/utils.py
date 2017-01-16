@@ -23,24 +23,29 @@ RESTORE_AFTER_BUMP_TOPIC = "/restored_bump"
 INITIAL_RUN_TOPIC = "/initial_run"
 GOAL_TOPIC = "/move_base_simple/goal"
 
+#ODOM
+NO_MOVE_COUNT_THRESH = 5
 # CAMERA
 CAMERA_FREQUENCY = 30 if TYPE=='REAL' else 10
 IMG_W, IMG_H = 640, 480
 THUMBNAIL_W, THUMBNAIL_H = 128, 96
-IMG_SAVE_SKIP = 5 # how many images skipped when saving sequence
+IMG_SAVE_SKIP = 10 # how many images skipped when saving sequence
 
 #BUMP DETECTION
 BUMP_1_THRESH = 0.25 if TYPE=='REAL' else 0.6 #sim 0.6 real 0.2
 BUMP_02_THRESH = 0.18 if TYPE=='REAL' else 0.7 #sim 0.7 real 0.25
 NO_RETURN_THRESH = 0.05
-REVERSE_PUBLISH_DELAY = 0.2 # real 0.12
+REVERSE_PUBLISH_DELAY = 0.1 # real 0.12
 ZERO_VEL_PUBLISH_DELAY = 0.01 # publish 0 valued cmd_vel data
+
+#Parallelization
+THREADS = 50
 
 #LASER
 LASER_FREQUENCY = 40 if TYPE=='REAL' else 10 #sim 10 real 40 
 LASER_POINT_COUNT = 1080 if TYPE=='REAL' else 180
 LASER_ANGLE = 270 if TYPE=='REAL' else 180 # 
-PREF_FREQUENCY = 30 if TYPE=='REAL' else 10
+PREF_FREQUENCY = 10 if TYPE=='REAL' else 10
 
 #COMMANDS
 GOAL_CANCEL_CMD = "rosservice call /autonomy/path_follower/cancel_request"
