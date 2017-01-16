@@ -14,14 +14,21 @@ filenames = ['bump_log_train_sim_ra.log','bump_log_train_sim_sd.log','bump_log_t
 sim_ra_bump_nw = []
 sim_ra_bump_w = []
 
-legend_fontsize = 8
+legend_fontsize = 12
+axis_fontsize=14
+title_fontsize=18
 
 only_upper_row = True
 
-if uncertainity_per_bump:
-    y_lims = [(4,16),(8,16),(4,14),(0.1,0.9),(0.3,0.65),(0.3,0.8)]
+if only_upper_row:
+    y_lims = [(4,16),(8,14),(6,14)]
+    x_lims = [(0,500),(0,400),(0,400)]
+else:
+    if uncertainity_per_bump:
+        y_lims = [(4,16),(8,16),(4,14),(0.1,0.9),(0.3,0.65),(0.3,0.8)]
+        x_lims = [(0,500),(0,400),(0,400),(0,500),(0,400),(0,400)]
 
-drop_count = 2
+drop_count = 3
 with open(filenames[0], 'rt') as csvfile:
     bumpreader = csv.reader(csvfile, delimiter=',')
     j=0
@@ -312,11 +319,11 @@ if uncertainity_per_bump:
 if not sliding_window:
 
     if not uncertainity_per_bump or only_upper_row:
-        ax1.plot(sim_x_vals, sim_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
-        ax1.plot(sim_x_vals, sim_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
-        ax1.plot(sim_x_vals, sim_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
-        ax1.plot(sim_x_vals, sim_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
-        ax1.plot(sim_x_vals, sim_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
+        ax1.plot(sim_x_vals, sim_ra_bump_nw, 'r', label='$L_{NW}$ (RA-DAE)')
+        ax1.plot(sim_x_vals, sim_ra_bump_w, 'r--', label='$L_{W}$ (RA-DAE)')
+        ax1.plot(sim_x_vals, sim_sd_bump_nw, 'y', label='$L_{NW}$ (SDAE)')
+        ax1.plot(sim_x_vals, sim_sd_bump_w, 'y--', label='$L_{W}$ (SDAE)')
+        ax1.plot(sim_x_vals, sim_lr_bump_nw, 'b', label='$L_{NW}$ (LR)')
         ax1.plot(sim_x_vals, sim_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
         ax2.plot(x_vals, office_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
@@ -334,12 +341,12 @@ if not sliding_window:
         ax3.plot(out_x_vals, outdoor_lr_bump_w, 'b--', label='Weighted bumps (LR)')
 
     else:
-        ax1.plot(sim_x_vals, sim_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
-        ax4.plot(sim_x_vals, sim_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
-        ax1.plot(sim_x_vals, sim_sd_bump_nw, 'y', label='Non-weighted bumps (SDAE)')
-        ax4.plot(sim_x_vals, sim_sd_bump_w, 'y--', label='Weighted bumps (SDAE)')
-        ax1.plot(sim_x_vals, sim_lr_bump_nw, 'b', label='Non-weighted bumps (LR)')
-        ax4.plot(sim_x_vals, sim_lr_bump_w, 'b--', label='Non-weighted bumps (LR)')
+        ax1.plot(sim_x_vals, sim_ra_bump_nw, 'r', label='$L_{NW}$ (RA-DAE)')
+        ax4.plot(sim_x_vals, sim_ra_bump_w, 'r--', label='$L_{W}$ (RA-DAE)')
+        ax1.plot(sim_x_vals, sim_sd_bump_nw, 'y', label='$L_{NW}$ (SDAE)')
+        ax4.plot(sim_x_vals, sim_sd_bump_w, 'y--', label='$L_{W}$ (SDAE)')
+        ax1.plot(sim_x_vals, sim_lr_bump_nw, 'b', label='$L_{NW}$ (LR)')
+        ax4.plot(sim_x_vals, sim_lr_bump_w, 'b--', label='$L_{W}$ (LR)')
 
         ax2.plot(x_vals, office_ra_bump_nw, 'r', label='Non-weighted bumps (RA-DAE)')
         ax5.plot(x_vals, office_ra_bump_w, 'r--', label='Weighted bumps (RA-DAE)')
@@ -379,31 +386,30 @@ else:
         outdoor_lr_bump_w_slide = slide_window_v2(outdoor_lr_bump_w)
         outdoor_lr_bump_nw_slide = slide_window_v2(outdoor_lr_bump_nw)
 
-        ax1.plot(sim_x_vals, sim_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
-        ax1.plot(sim_x_vals, sim_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
-        ax1.plot(sim_x_vals, sim_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
+        ax1.plot(sim_x_vals, sim_ra_bump_nw_slide, 'r', label='$L_{NW}$ (RA-DAE)',marker='o')
+        ax1.plot(sim_x_vals, sim_sd_bump_nw_slide, 'b', label='$L_{NW}$ (SDAE)',marker='x')
+        ax1.plot(sim_x_vals, sim_lr_bump_nw_slide, 'y', label='$L_{NW}$ (LR)',marker='s')
 
         if not only_upper_row:
-            ax1.plot(sim_x_vals, sim_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
-            ax1.plot(sim_x_vals, sim_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
-            ax1.plot(sim_x_vals, sim_lr_bump_w_slide, 'y', label='Weighted bumps (LR)',marker='s')
+            ax1.plot(sim_x_vals, sim_ra_bump_w_slide, 'r--', label='$L_{W}$ (RA-DAE)',marker='o')
+            ax1.plot(sim_x_vals, sim_sd_bump_w_slide, 'b--', label='$L_{W}$ (SDAE)',marker='x')
+            ax1.plot(sim_x_vals, sim_lr_bump_w_slide, 'y', label='$L_{W}$ (LR)',marker='s')
 
-
-        ax2.plot(x_vals, office_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
-        ax2.plot(x_vals, office_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
-        ax2.plot(x_vals, office_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
+        ax2.plot(x_vals, office_ra_bump_nw_slide, 'r', label='$L_{NW}$ (RA-DAE)',marker='o')
+        ax2.plot(x_vals, office_sd_bump_nw_slide, 'b', label='$L_{NW}$ (SDAE)',marker='x')
+        ax2.plot(x_vals, office_lr_bump_nw_slide, 'y', label='$L_{NW}$ (LR)',marker='s')
         if not only_upper_row:
-            ax2.plot(x_vals, office_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
-            ax2.plot(x_vals, office_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
-            ax2.plot(x_vals, office_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
+            ax2.plot(x_vals, office_ra_bump_w_slide, 'r--', label='$L_{W}$ (RA-DAE)',marker='o')
+            ax2.plot(x_vals, office_sd_bump_w_slide, 'b--', label='$L_{W}$ (SDAE)',marker='x')
+            ax2.plot(x_vals, office_lr_bump_w_slide, 'y--', label='$L_{W}$ (LR)',marker='s')
 
-        ax3.plot(out_x_vals, outdoor_ra_bump_nw_slide, 'r', label='Non-weighted bumps (RA-DAE)',marker='o')
-        ax3.plot(out_x_vals, outdoor_sd_bump_nw_slide, 'b', label='Non-weighted bumps (SDAE)',marker='x')
-        ax3.plot(out_x_vals, outdoor_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
+        ax3.plot(out_x_vals, outdoor_ra_bump_nw_slide, 'r', label='$L_{NW}$ (RA-DAE)',marker='o')
+        ax3.plot(out_x_vals, outdoor_sd_bump_nw_slide, 'b', label='$L_{NW}$ (SDAE)',marker='x')
+        ax3.plot(out_x_vals, outdoor_lr_bump_nw_slide, 'y', label='$L_{NW}$ (LR)',marker='s')
         if not only_upper_row:
-            ax3.plot(out_x_vals, outdoor_ra_bump_w_slide, 'r--', label='Weighted bumps (RA-DAE)',marker='o')
-            ax3.plot(out_x_vals, outdoor_sd_bump_w_slide, 'b--', label='Weighted bumps (SDAE)',marker='x')
-            ax3.plot(out_x_vals, outdoor_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
+            ax3.plot(out_x_vals, outdoor_ra_bump_w_slide, 'r--', label='$L_{W}$ (RA-DAE)',marker='o')
+            ax3.plot(out_x_vals, outdoor_sd_bump_w_slide, 'b--', label='$L_{W}$ (SDAE)',marker='x')
+            ax3.plot(out_x_vals, outdoor_lr_bump_w_slide, 'y--', label='$L_{W}$ (LR)',marker='s')
 
     else:
         sim_ra_bump_w_slide=slide_window_v2(sim_ra_bump_w)
@@ -448,20 +454,27 @@ else:
         ax3.plot(out_x_vals, outdoor_lr_bump_nw_slide, 'y', label='Non-weighted bumps (LR)',marker='s')
         ax6.plot(out_x_vals, outdoor_lr_bump_w_slide, 'y--', label='Weighted bumps (LR)',marker='s')
 
-ax1.set_title('Simulation')
-ax1.set_xlabel('Episode')
-ax1.set_title('Simulation')
+ax1.set_title('Simulation',fontsize=title_fontsize)
+ax1.set_xlabel('Episode',fontsize=axis_fontsize)
+ax1.set_ylabel('Number of Bumps',fontsize=axis_fontsize)
 ax1.legend(fontsize=legend_fontsize)
 
-ax2.set_title('Office (Real)')
-ax2.set_xlabel('Episode')
-ax2.set_ylabel('Number of Bumps')
+ax2.set_title('Office (Real)',fontsize=title_fontsize)
+ax2.set_xlabel('Episode',fontsize=axis_fontsize)
+ax2.set_ylabel('Number of Bumps',fontsize=axis_fontsize)
 ax2.legend(fontsize=legend_fontsize)
 
-ax3.set_title('Outdoor (Real)')
-ax3.set_xlabel('Episode')
-ax3.set_ylabel('Number of Bumps')
+ax3.set_title('Outdoor (Real)',fontsize=title_fontsize)
+ax3.set_xlabel('Episode',fontsize=axis_fontsize)
+ax3.set_ylabel('Number of Bumps',fontsize=axis_fontsize)
 ax3.legend(fontsize=legend_fontsize)
+
+ax1.set_ylim(y_lims[0])
+ax2.set_ylim(y_lims[1])
+ax3.set_ylim(y_lims[2])
+ax1.set_xlim(x_lims[0])
+ax2.set_xlim(x_lims[1])
+ax3.set_xlim(x_lims[2])
 
 if uncertainity_per_bump and (not only_upper_row):
 
@@ -480,9 +493,6 @@ if uncertainity_per_bump and (not only_upper_row):
     ax6.set_ylabel('Certainity')
     ax6.legend(fontsize=legend_fontsize)
 
-    ax1.set_ylim(y_lims[0])
-    ax2.set_ylim(y_lims[1])
-    ax3.set_ylim(y_lims[2])
     ax4.set_ylim(y_lims[3])
     ax5.set_ylim(y_lims[4])
     ax6.set_ylim(y_lims[5])
